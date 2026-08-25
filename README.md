@@ -3,6 +3,7 @@
 **Retrieval-augmented generation for Laravel, with an eval harness that fails your build when retrieval quality drops.**
 
 [![CI](https://github.com/ikramulmustafa/laravel-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/ikramulmustafa/laravel-rag/actions/workflows/ci.yml)
+[![Packagist](https://img.shields.io/packagist/v/ikramulmustafa/laravel-rag.svg)](https://packagist.org/packages/ikramulmustafa/laravel-rag)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![PHP](https://img.shields.io/badge/php-8.2%2B-777BB4.svg?logo=php&logoColor=white)](https://www.php.net/)
 [![Laravel](https://img.shields.io/badge/laravel-12-FF2D20.svg?logo=laravel&logoColor=white)](https://laravel.com/)
@@ -518,3 +519,7 @@ through [SECURITY.md](SECURITY.md), not the public issue tracker.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+Built by [Ikram UL Mustafa](https://ikramulmustafa.com) — I build RAG and agent systems on Laravel. Notes on the engineering behind this package are at [ikramulmustafa.com](https://ikramulmustafa.com).
