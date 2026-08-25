@@ -10,6 +10,18 @@ such change will be listed here under **Changed** with an upgrade note.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-08-25
+
+Packaging metadata only. No functional change, no API change; upgrading from
+0.1.0 requires nothing.
+
+### Added
+
+- A top-level `homepage` field in `composer.json`. Packagist renders this as the
+  package Homepage link; `authors[].homepage` is a separate field and does not
+  produce it, so the package page previously had no link to the project site.
+- A Packagist version badge in the README, and an author line linking the site.
+
 ## [0.1.0] - 2026-08-25
 
 First public release. Requires PHP 8.2+ and Laravel 12.
@@ -50,5 +62,6 @@ no version of it this package could claim support for and also test.
   similarity, pgvector literal formatting and the full eval scoring path on bare
   PHP with no Composer dependencies.
 
-[Unreleased]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ikramulmustafa/laravel-rag/releases/tag/v0.1.0
