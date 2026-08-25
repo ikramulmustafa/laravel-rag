@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Proof of the claim that the core logic is testable with nothing installed.
+  # Runs before any dependency resolution, so a Packagist outage cannot hide a
+  # break in chunking, scoring or the vector literal format.
+  standalone:
+    runs-on: ubuntu-latest
+    name: Standalone verifier (no dependencies)
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring
+          coverage: none
+
+      - run: php tests/verify-standalone.php
+
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Laravel 12 only. Every 11.x release carries a Packagist security
+        # advisory, so Composer's default policy refuses to install it and there
+        # is no version of Laravel 11 this package could honestly claim to
+        # support. Laravel 12 requires PHP 8.2+, which sets the floor here.
+        php: ['8.2', '8.3', '8.4']
+
+    name: PHP ${{ matrix.php }} · Laravel 12
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - run: vendor/bin/pest
+
+  # Retrieval quality is checked separately, against Postgres with pgvector.
+  # This is the job that fails when a change degrades recall — the whole point
+  # of shipping an eval harness rather than leaving it to each application.
+  #
+  # It also exercises the pgvector query path, which the SQLite suite cannot
+  # reach: the `<=>` cosine operator and the HNSW index only exist here.
+  eval:
+    runs-on: ubuntu-latest
+    name: Retrieval eval (pgvector)
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rag_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      RAG_EMBEDDING_DRIVER: fake
+      RAG_EMBEDDING_DIMENSIONS: 64
+      DB_CONNECTION: pgsql
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_DATABASE: rag_test
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo, pdo_pgsql
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Ingest the fixture corpus
+        run: |
+          vendor/bin/testbench migrate --force
+          vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
+
+      # k=4, not the default 5: the fixture corpus is six chunks, so a window of
+      # five returns nearly all of it and the must_not_contain case in the suite
+      # could never fail. A window has to be smaller than the corpus to measure
+      # anything. See the eval harness section of the README.
+      - name: Fail the build if retrieval regressed
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=4 --ci
+
+      # A history that silently stops being written is the same class of failure
+      # this package is about, so assert the row landed rather than trusting it.
+      - name: Check the run was recorded in rag_eval_runs
+        run: |
+          php -r '$p = new PDO("pgsql:host=localhost;port=5432;dbname=rag_test", "postgres", "postgres"); $r = $p->query("SELECT suite, embedding_model, total_cases FROM rag_eval_runs ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC); if (! $r) { fwrite(STDERR, "no eval run was recorded\n"); exit(1); } if ($r["embedding_model"] !== "fake:deterministic-hash") { fwrite(STDERR, "recorded run has the wrong embedding model: " . $r["embedding_model"] . "\n"); exit(1); } echo "recorded: ", json_encode($r), PHP_EOL;'
+
+  static:
+    runs-on: ubuntu-latest
+    name: Lint and static analysis
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+      - run: vendor/bin/pint --test
+      - run: vendor/bin/phpstan analyse

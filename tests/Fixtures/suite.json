@@ -1,0 +1,26 @@
+{
+  "refund-window": {
+    "query": "How long do customers have to request a refund?",
+    "expected_sources": ["tests/Fixtures/corpus/refunds.md"],
+    "must_contain": ["30 days"]
+  },
+  "non-refundable-items": {
+    "query": "Which items cannot be refunded?",
+    "expected_sources": ["tests/Fixtures/corpus/refunds.md"],
+    "must_contain": ["gift cards"]
+  },
+  "shipping-time": {
+    "query": "How long does standard shipping take?",
+    "expected_sources": ["tests/Fixtures/corpus/shipping.md"]
+  },
+  "leave-carryover": {
+    "query": "How many unused leave days can I carry over?",
+    "expected_sources": ["tests/Fixtures/corpus/leave.md"],
+    "must_contain": ["carry over"]
+  },
+  "leave-not-shipping": {
+    "query": "What is the annual leave accrual rate?",
+    "expected_sources": ["tests/Fixtures/corpus/leave.md"],
+    "must_not_contain": ["PO boxes"]
+  }
+}

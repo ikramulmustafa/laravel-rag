@@ -1,0 +1,64 @@
+name: Bug report
+description: Something behaves differently from what the README says
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If the problem is that retrieval returns the wrong
+        thing rather than that something errors, the "Retrieval quality" template
+        is a better fit — that one asks for the eval output instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: PHP, Laravel and database
+      placeholder: PHP 8.3, Laravel 12.x, PostgreSQL 16 with pgvector 0.7
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: Include the full error and stack trace if there is one.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: >
+        The smallest reproduction you can manage. Config values that differ from
+        the defaults are usually the useful part — chunk size, dimensions,
+        min_score, embedding driver.
+      render: shell
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I have run `php artisan migrate` after installing or upgrading.
+        - label: >
+            If the error is `MixedEmbeddingModels`, I have read what it says. It is
+            usually correct: the corpus and the configured model genuinely differ,
+            and `rag:reindex` is the fix.

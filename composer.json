@@ -1,0 +1,75 @@
+{
+    "name": "ikramulmustafa/laravel-rag",
+    "description": "Production RAG for Laravel: pgvector retrieval with citations, and an eval harness that fails CI when retrieval quality regresses.",
+    "keywords": [
+        "laravel",
+        "rag",
+        "pgvector",
+        "embeddings",
+        "llm",
+        "ai",
+        "retrieval",
+        "evaluation"
+    ],
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Muhammad Ikram Ul Mustafa",
+            "email": "rao.ikram42@gmail.com",
+            "homepage": "https://ikramulmustafa.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/ikramulmustafa/laravel-rag/issues",
+        "source": "https://github.com/ikramulmustafa/laravel-rag"
+    },
+    "require": {
+        "php": "^8.2",
+        "illuminate/console": "^12.0",
+        "illuminate/database": "^12.0",
+        "illuminate/http": "^12.0",
+        "illuminate/support": "^12.0",
+        "symfony/finder": "^7.0"
+    },
+    "require-dev": {
+        "laravel/pint": "^1.18",
+        "orchestra/testbench": "^10.0",
+        "pestphp/pest": "^3.0",
+        "phpstan/phpstan": "^2.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Ikram\\Rag\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ikram\\Rag\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Ikram\\Rag\\RagServiceProvider"
+            ],
+            "aliases": {
+                "Rag": "Ikram\\Rag\\Facades\\Rag"
+            }
+        }
+    },
+    "scripts": {
+        "test": "pest",
+        "lint": "pint --test",
+        "fix": "pint",
+        "analyse": "phpstan analyse",
+        "verify": "@php tests/verify-standalone.php"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

@@ -1,0 +1,70 @@
+name: Retrieval quality
+description: Retrieval returns the wrong chunks, or scores dropped unexpectedly
+labels: [retrieval]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Retrieval returning something unhelpful is not always a bug — sometimes the
+        corpus genuinely cannot answer the question, which is what `min_score` and
+        `expect_no_answer` are for. The eval output is what separates the two, so
+        this template asks for it.
+
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      placeholder: v0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: embedder
+    attributes:
+      label: Embedding driver, model and dimensions
+      placeholder: openai, text-embedding-3-small, 1536
+    validations:
+      required: true
+
+  - type: input
+    id: chunking
+    attributes:
+      label: Chunk size and overlap
+      placeholder: 1000 / 200
+    validations:
+      required: true
+
+  - type: input
+    id: corpus
+    attributes:
+      label: Roughly how many documents and chunks
+      placeholder: ~400 documents, ~9,000 chunks
+    validations:
+      required: true
+
+  - type: textarea
+    id: eval
+    attributes:
+      label: Output of `php artisan rag:eval --json`
+      description: >
+        Redact the chunk text if it is sensitive, but please keep the metrics and
+        the failure reasons intact.
+      render: json
+    validations:
+      required: true
+
+  - type: textarea
+    id: expectation
+    attributes:
+      label: Which case is wrong, and what should have come back
+    validations:
+      required: true
+
+  - type: textarea
+    id: changed
+    attributes:
+      label: What changed before scores moved
+      description: >
+        Model swap, chunk size edit, a batch of new documents, a version upgrade.
+        If you have a baseline from before, the `--baseline` diff is the single most
+        useful thing you can attach.

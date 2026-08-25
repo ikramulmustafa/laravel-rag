@@ -1,0 +1,46 @@
+name: Feature request
+description: Suggest something the package should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Two things are known to be missing and are listed as limitations in the
+        README: **reranking** and **hybrid (BM25 + dense) search**. Both are real
+        gaps. If that is what you need, say so here — it is useful signal — but
+        expect a discussion about scope rather than a quick yes.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do that you cannot do now
+      description: The problem, rather than the proposed API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: >
+        `Embedder` and `Retriever` are interfaces and `Chunker` is four methods, so
+        some of this is reachable without changing the package. Knowing where that
+        was awkward is the useful part.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: eval
+    attributes:
+      label: Measurement
+      options:
+        - label: >
+            I understand a change affecting retrieval will need before-and-after
+            `rag:eval` output to be merged.
