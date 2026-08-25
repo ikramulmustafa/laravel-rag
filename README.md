@@ -454,7 +454,12 @@ That matters more than it sounds. An offline suite runs on every push. A suite
 needing an API key runs nightly, if at all.
 
 CI additionally runs the eval job against real Postgres with pgvector, so the ANN
-path and the in-PHP fallback are both exercised.
+path and the in-PHP fallback are both exercised. On the fixture suite the two
+agree exactly — `pass_rate` 1.000, `recall_at_k` 1.000, `mrr` 0.767,
+`mean_top_score` 0.531 from both the `<=>` cosine operator over an HNSW index and
+the PHP implementation. That agreement is the point of running both: it is what
+tells you the portable fallback is a fallback and not a second, subtly different
+retriever.
 
 There is also `tests/verify-standalone.php`, which covers chunking, the fake
 embedder, cosine similarity, pgvector literal formatting and the full eval
