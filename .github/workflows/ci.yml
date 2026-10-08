@@ -33,13 +33,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Laravel 12 only. Every 11.x release carries a Packagist security
+        # Laravel 12 and 13. Every 11.x release carries a Packagist security
         # advisory, so Composer's default policy refuses to install it and there
         # is no version of Laravel 11 this package could honestly claim to
-        # support. Laravel 12 requires PHP 8.2+, which sets the floor here.
+        # support. Laravel 12 requires PHP 8.2+; Laravel 13 requires PHP 8.3+.
+        laravel: ['12', '13']
         php: ['8.2', '8.3', '8.4']
+        exclude:
+          - laravel: '13'
+            php: '8.2'
 
-    name: PHP ${{ matrix.php }} · Laravel 12
+    name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }}
 
     steps:
       - uses: actions/checkout@v5
@@ -50,7 +54,8 @@ jobs:
           extensions: mbstring, pdo, pdo_sqlite, sqlite3
           coverage: none
 
-      - run: composer update --prefer-dist --no-interaction --no-progress
+      # Pin the framework major for this leg; testbench, Pest and PHPUnit follow.
+      - run: composer update --prefer-dist --no-interaction --no-progress -W --with "illuminate/support:^${{ matrix.laravel }}.0"
 
       - run: vendor/bin/pest
 

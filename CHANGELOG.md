@@ -10,6 +10,12 @@ such change will be listed here under **Changed** with an upgrade note.
 
 ## [Unreleased]
 
+### Added
+
+- Laravel 13 support. `illuminate/*` now accepts `^12.0|^13.0` and `symfony/finder`
+  accepts `^7.0|^8.0`. Laravel 13 requires PHP 8.3+; Laravel 12 still runs on PHP 8.2+.
+  CI tests both majors.
+
 ## [0.1.1] - 2026-08-25
 
 Packaging metadata only. No functional change, no API change; upgrading from

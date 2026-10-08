@@ -42,7 +42,7 @@ php artisan vendor:publish --tag=rag-config
 php artisan migrate
 ```
 
-Requires **PHP 8.2+**, **Laravel 12**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
+Requires **PHP 8.2+** with **Laravel 12**, or **PHP 8.3+** with **Laravel 13**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
 
 Laravel 11 is not supported. Every 11.x release now carries a Packagist security advisory, so Composer blocks it under its default policy and the version cannot be installed or tested at all. Claiming support for something CI cannot verify seemed worse than saying so here.
 
