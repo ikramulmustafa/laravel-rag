@@ -108,12 +108,12 @@ jobs:
           vendor/bin/testbench migrate --force
           vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
 
-      # k=4, not the default 5: the fixture corpus is six chunks, so a window of
-      # five returns nearly all of it and the must_not_contain case in the suite
-      # could never fail. A window has to be smaller than the corpus to measure
-      # anything. See the eval harness section of the README.
+      # k=1, not the default 5: the fixture corpus is three chunks, one per
+      # document, so any window of two or more returns most of it and the
+      # must_not_contain case fails whatever the ranking is. A window has to be
+      # smaller than the corpus to measure anything. See the README example.
       - name: Fail the build if retrieval regressed
-        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=4 --ci
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=1 --ci
 
       # A history that silently stops being written is the same class of failure
       # this package is about, so assert the row landed rather than trusting it.

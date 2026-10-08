@@ -62,6 +62,12 @@ final class RecursiveChunker implements Chunker
                 $chunks[] = new TextChunk($slice, $index++, $cursor, $end);
             }
 
+            // This chunk reached the end of the text. Stepping back by the overlap from
+            // here would only re-emit the tail this chunk already holds, as a duplicate.
+            if ($end >= $total) {
+                break;
+            }
+
             $next = $end - $this->overlap;
 
             // Guard against pathological inputs where the boundary search returns
