@@ -23,8 +23,9 @@ such change will be listed here under **Changed** with an upgrade note.
   emitted the tail again, so any document longer than the overlap ended in a chunk
   that repeated the previous one and took a retrieval slot. Re-run
   `php artisan rag:reindex` to drop the duplicates from an existing index.
-- The CI eval job and README example reflect the corrected fixture corpus (three
-  chunks): CI now scores the fixtures at `k=1`.
+- The CI eval job ingests the fixtures in 200-character chunks (seven chunks) and
+  scores them at `k=2`; with the duplicates gone, one chunk per document left the
+  hashed test embedder tying two documents. README example and CONTRIBUTING updated.
 
 ## [0.1.1] - 2026-08-25
 

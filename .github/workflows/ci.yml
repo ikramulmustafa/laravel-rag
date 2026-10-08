@@ -85,6 +85,11 @@ jobs:
     env:
       RAG_EMBEDDING_DRIVER: fake
       RAG_EMBEDDING_DIMENSIONS: 64
+      # Small chunks, so the three short fixture documents become seven chunks and
+      # each passage wins its query by a clear margin. With one chunk per document
+      # the hashed fake embedder at 64 dimensions ties refunds and shipping.
+      RAG_CHUNK_SIZE: 200
+      RAG_CHUNK_OVERLAP: 40
       DB_CONNECTION: pgsql
       DB_HOST: localhost
       DB_PORT: 5432
@@ -108,12 +113,12 @@ jobs:
           vendor/bin/testbench migrate --force
           vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
 
-      # k=1, not the default 5: the fixture corpus is three chunks, one per
-      # document, so any window of two or more returns most of it and the
-      # must_not_contain case fails whatever the ranking is. A window has to be
-      # smaller than the corpus to measure anything. See the README example.
+      # k=2, not the default 5: the window has to stay well below the seven-chunk
+      # corpus, or the must_not_contain case starts failing whatever the ranking
+      # is (it does from k=4) and the eval stops measuring retrieval. See the
+      # README example.
       - name: Fail the build if retrieval regressed
-        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=1 --ci
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --ci
 
       # A history that silently stops being written is the same class of failure
       # this package is about, so assert the row landed rather than trusting it.

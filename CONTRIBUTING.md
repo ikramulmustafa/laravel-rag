@@ -36,13 +36,16 @@ Chunking, scoring, filtering, the embedder, the query path: include the
 before-and-after `rag:eval` output in the pull request description.
 
 ```bash
+# the same settings as the CI eval job
+export RAG_EMBEDDING_DRIVER=fake RAG_EMBEDDING_DIMENSIONS=64 RAG_CHUNK_SIZE=200 RAG_CHUNK_OVERLAP=40
+
 vendor/bin/testbench migrate --force
 vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
-vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=1 --save=before.json
+vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --save=before.json
 
 # make your change, then:
 vendor/bin/testbench rag:reindex --force
-vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=1 --baseline=before.json
+vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --baseline=before.json
 ```
 
 That is the standard this package asks of its users, so it holds itself to it. A

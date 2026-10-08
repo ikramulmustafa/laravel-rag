@@ -200,7 +200,8 @@ That failure is the point of the example. The fixture corpus is three chunks, on
 per document, so a window of four returns all of it, and a `must_not_contain`
 assertion against a window that holds the whole corpus fails whatever the ranking
 is. It tells you nothing about retrieval. A window has to be smaller than the
-corpus to measure anything, which is why CI scores these fixtures at `k=1`.
+corpus to measure anything, which is why CI ingests the fixtures in 200-character
+chunks (seven of them) and scores them at `k=2`.
 
 ### What gets measured
 
