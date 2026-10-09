@@ -10,6 +10,23 @@ such change will be listed here under **Changed** with an upgrade note.
 
 ## [Unreleased]
 
+### Added
+
+- Laravel 13 support. `illuminate/*` now accepts `^12.0|^13.0` and `symfony/finder`
+  accepts `^7.0|^8.0`. Laravel 13 requires PHP 8.3+; Laravel 12 still runs on PHP 8.2+.
+  CI tests both majors.
+
+### Fixed
+
+- The chunker no longer emits a duplicate chunk at the end of a document. Once a
+  chunk reached the end of the text, the loop stepped back by the overlap and
+  emitted the tail again, so any document longer than the overlap ended in a chunk
+  that repeated the previous one and took a retrieval slot. Re-run
+  `php artisan rag:reindex` to drop the duplicates from an existing index.
+- The CI eval job ingests the fixtures in 200-character chunks (seven chunks) and
+  scores them at `k=2`; with the duplicates gone, one chunk per document left the
+  hashed test embedder tying two documents. README example and CONTRIBUTING updated.
+
 ## [0.1.1] - 2026-08-25
 
 Packaging metadata only. No functional change, no API change; upgrading from

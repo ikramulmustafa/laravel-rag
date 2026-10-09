@@ -16,6 +16,27 @@ it('keeps short text as a single chunk', function (): void {
         ->and($chunks[0]->index)->toBe(0);
 });
 
+it('keeps text longer than the overlap but shorter than the size as a single chunk', function (): void {
+    $text = trim(str_repeat('Lorem ipsum dolor sit amet. ', 10));
+
+    $chunks = (new RecursiveChunker(size: 1000, overlap: 200))->chunk($text);
+
+    expect($chunks)->toHaveCount(1)
+        ->and($chunks[0]->text)->toBe($text);
+});
+
+it('never emits a final chunk that only repeats the previous chunk\'s tail', function (): void {
+    $chunks = (new RecursiveChunker(size: 100, overlap: 20))->chunk(str_repeat('word ', 200));
+    $last = end($chunks);
+
+    expect($last->endOffset)->toBe(mb_strlen(trim(str_repeat('word ', 200))));
+
+    foreach (array_slice($chunks, 1) as $i => $chunk) {
+        expect($chunk->startOffset)->toBeLessThan($chunks[$i]->endOffset)
+            ->and($chunk->endOffset)->toBeGreaterThan($chunks[$i]->endOffset);
+    }
+});
+
 it('prefers paragraph boundaries over hard cuts', function (): void {
     $text = str_repeat('alpha ', 20)."\n\n".str_repeat('beta ', 20);
     $chunks = (new RecursiveChunker(size: 130, overlap: 20))->chunk($text);

@@ -42,7 +42,7 @@ php artisan vendor:publish --tag=rag-config
 php artisan migrate
 ```
 
-Requires **PHP 8.2+**, **Laravel 12**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
+Requires **PHP 8.2+** with **Laravel 12**, or **PHP 8.3+** with **Laravel 13**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
 
 Laravel 11 is not supported. Every 11.x release now carries a Packagist security advisory, so Composer blocks it under its default policy and the version cannot be installed or tested at all. Claiming support for something CI cannot verify seemed worse than saying so here.
 
@@ -185,7 +185,7 @@ $ vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=4
 | pass_rate      | 0.800 | 0.900 | BELOW |
 | recall_at_k    | 1.000 | 0.800 | pass  |
 | mrr            | 1.000 | 0.600 | pass  |
-| mean_top_score | 0.550 | —     |       |
+| mean_top_score | 0.311 | —     |       |
 +----------------+-------+-------+-------+
 
    WARN  1 case(s) failed:
@@ -196,11 +196,12 @@ $ vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=4
     → retrieved context contains forbidden text: 'PO boxes'
 ```
 
-That run is scored at `k=4` rather than the default `5` on purpose. The fixture
-corpus is six chunks, so a window of five returns almost all of it, and a
-`must_not_contain` assertion against a window that holds the whole corpus cannot
-tell you anything. A window has to be smaller than the corpus for the harness to
-be measuring retrieval at all.
+That failure is the point of the example. The fixture corpus is three chunks, one
+per document, so a window of four returns all of it, and a `must_not_contain`
+assertion against a window that holds the whole corpus fails whatever the ranking
+is. It tells you nothing about retrieval. A window has to be smaller than the
+corpus to measure anything, which is why CI ingests the fixtures in 200-character
+chunks (seven of them) and scores them at `k=2`.
 
 ### What gets measured
 
