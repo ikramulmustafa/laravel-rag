@@ -10,6 +10,12 @@ such change will be listed here under **Changed** with an upgrade note.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
+Laravel 13 support, and a chunker fix that changes chunk counts: run
+`php artisan rag:reindex` after upgrading to drop the duplicate chunks from an
+existing index.
+
 ### Added
 
 - Laravel 13 support. `illuminate/*` now accepts `^12.0|^13.0` and `symfony/finder`
@@ -79,6 +85,7 @@ no version of it this package could claim support for and also test.
   similarity, pgvector literal formatting and the full eval scoring path on bare
   PHP with no Composer dependencies.
 
-[Unreleased]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/ikramulmustafa/laravel-rag/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ikramulmustafa/laravel-rag/releases/tag/v0.1.0
