@@ -9,6 +9,7 @@ use Ikram\Rag\Exceptions\EmbeddingFailed;
 use InvalidArgumentException;
 use Laravel\Ai\Ai;
 use Laravel\Ai\Embeddings;
+use Laravel\Ai\Enums\Lab;
 use Laravel\Ai\PendingResponses\PendingEmbeddingsGeneration;
 use Laravel\Ai\Providers\Provider;
 use Throwable;
@@ -50,12 +51,15 @@ final class SdkEmbedder implements Embedder
      * Build from the `rag.embedding` config block. Every key has a default, so a
      * published 0.2 config that lacks the newer keys still resolves.
      *
+     * `provider` may be a name or a Lab enum, as in config/ai.php.
+     *
      * @param  array<string, mixed>  $config
      * @param  string|null  $defaultProvider  `ai.default_for_embeddings`, used when `provider` is not set.
      */
     public static function fromConfig(array $config, ?string $defaultProvider): self
     {
         $provider = $config['provider'] ?? null;
+        $provider = $provider instanceof Lab ? $provider->value : $provider;
         $provider = $provider === '' ? null : $provider;
         $provider ??= $defaultProvider;
 
@@ -75,7 +79,9 @@ final class SdkEmbedder implements Embedder
             $instance = Ai::embeddingProvider($provider);
         } catch (InvalidArgumentException $e) {
             throw new InvalidArgumentException(
-                "Embedding provider [{$provider}] is not defined. Add it to the providers in config/ai.php, or set RAG_EMBEDDING_PROVIDER to one that is.",
+                config("ai.providers.{$provider}") === null
+                    ? "Embedding provider [{$provider}] is not defined. Add it to the providers in config/ai.php, or set RAG_EMBEDDING_PROVIDER to one that is."
+                    : "Embedding provider [{$provider}] is defined in config/ai.php but could not be built. Check its `driver` setting.",
                 previous: $e,
             );
         }

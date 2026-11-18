@@ -107,3 +107,15 @@ function useSpyEmbedder(int $dimensions = 64): object
 
     return $spy;
 }
+
+/** Catch what `$fn` throws, so a test can look at the whole exception. */
+function caught(Closure $fn): Throwable
+{
+    try {
+        $fn();
+    } catch (Throwable $e) {
+        return $e;
+    }
+
+    throw new RuntimeException('Expected an exception, nothing was thrown.');
+}

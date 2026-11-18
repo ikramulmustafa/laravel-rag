@@ -8,6 +8,7 @@ use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Embedding\SdkEmbedder;
 use Ikram\Rag\Facades\Rag;
 use Illuminate\Support\Facades\Log;
+use Laravel\Ai\Embeddings;
 use Laravel\Ai\Enums\Lab;
 
 it('registers sdk, fake and the openai alias', function (): void {
@@ -108,16 +109,49 @@ it('warns about the alias once per application, however often it resolves', func
     Log::shouldHaveReceived('warning')->once();
 });
 
-it('warns once more when a 0.2 base_url pointed somewhere other than OpenAI', function (): void {
+it('refuses a 0.2 base_url that pointed somewhere other than OpenAI, before any request', function (): void {
     Log::spy();
-    config()->set('rag.embedding.base_url', 'https://llm.internal.example/v1');
+    fakeSdkEmbeddings();
 
-    $registry = app(EmbedderRegistry::class);
-    $registry->make('openai');
-    $registry->make('openai');
+    config()->set('rag.embedding', [
+        'driver' => 'openai',
+        'model' => 'text-embedding-3-small',
+        'dimensions' => 64,
+        'api_key' => 'sk-internal-secret',
+        'base_url' => 'https://llm.internal.example/v1',
+        'batch_size' => 96,
+    ]);
+    rebuildEmbedder();
 
-    Log::shouldHaveReceived('warning')->twice();
-    Log::shouldHaveReceived('warning')->with(Mockery::on(
-        fn (string $message): bool => str_contains($message, 'base_url') && str_contains($message, 'openai-compatible'),
-    ))->once();
+    $e = caught(fn () => Rag::ingest('policies/refunds.md', 'Customers may request a refund within 30 days.'));
+
+    expect($e)->toBeInstanceOf(InvalidArgumentException::class)
+        ->and($e->getMessage())->toContain('[llm.internal.example]')
+        ->and($e->getMessage())->toContain('RAG_EMBEDDING_DRIVER=sdk')
+        ->and($e->getMessage())->toContain('"openai-compatible"')
+        ->and($e->getMessage())->toContain('rag:reindex --stale')
+        ->and($e->getMessage())->not->toContain('sk-internal-secret');
+
+    Embeddings::assertNothingGenerated();
+});
+
+it('treats the OpenAI base_url with a trailing slash as the default', function (): void {
+    Log::spy();
+    config()->set('rag.embedding.driver', 'openai');
+    config()->set('rag.embedding.base_url', 'https://api.openai.com/v1/');
+    rebuildEmbedder();
+
+    expect(app(Embedder::class))->toBeInstanceOf(SdkEmbedder::class);
+
+    Log::shouldHaveReceived('warning')->once();
+});
+
+it('falls back to the openai provider when the alias sees an empty provider', function (): void {
+    config()->set('ai.default_for_embeddings', 'ollama');
+    config()->set('ai.providers.ollama', ['driver' => 'ollama']);
+    config()->set('rag.embedding.driver', 'openai');
+    config()->set('rag.embedding.provider', '');
+    rebuildEmbedder();
+
+    expect(app(Embedder::class)->modelId())->toBe('openai:text-embedding-3-small:64');
 });

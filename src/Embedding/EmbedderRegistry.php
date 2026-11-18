@@ -16,11 +16,12 @@ use UnexpectedValueException;
  * SDK), `fake` (deterministic, network-free) and `openai`, a deprecated alias
  * kept because a published 0.2 config still says `driver => 'openai'` and
  * `mergeConfigFrom` is shallow, so those apps would otherwise fail to boot on
- * upgrade. The alias goes in 1.0.
+ * upgrade. The alias goes in 1.0. It refuses a 0.2 config whose base_url
+ * pointed somewhere other than OpenAI, since it can no longer honour it.
  *
- * A container singleton, so the deprecation warnings are tracked per
- * application instance rather than in static state: each app warns once, and
- * the next test's fresh app warns again.
+ * A container singleton, so the deprecation warning is tracked per application
+ * instance rather than in static state: each app warns once, and the next
+ * test's fresh app warns again.
  */
 final class EmbedderRegistry
 {
@@ -84,18 +85,28 @@ final class EmbedderRegistry
     {
         $config = $this->config();
 
-        $this->warnOnce('openai-driver', '[laravel-rag] The "openai" embedding driver is deprecated; use "sdk" with RAG_EMBEDDING_PROVIDER=openai.');
-
-        // 0.2 read the endpoint from here. Now only config/ai.php does, so anyone
-        // who pointed it elsewhere is about to send their text to OpenAI instead.
+        // 0.2 read the endpoint from here; now only config/ai.php does. Carrying
+        // on would send the documents, and the credential meant for that endpoint,
+        // to api.openai.com instead, so refuse before anything is built.
         $baseUrl = $config['base_url'] ?? null;
 
         if (is_string($baseUrl) && $baseUrl !== '' && rtrim($baseUrl, '/') !== self::OPENAI_BASE_URL) {
-            $this->warnOnce('base-url', '[laravel-rag] rag.embedding.base_url is no longer read. '
-                .'Define an "openai-compatible" provider with that url in config/ai.php and set RAG_EMBEDDING_PROVIDER to its name.');
+            $host = parse_url($baseUrl, PHP_URL_HOST);
+
+            throw new InvalidArgumentException(sprintf(
+                'The deprecated "openai" embedding driver no longer reads rag.embedding.base_url, so it would send your '
+                .'documents to api.openai.com instead of %s. Set RAG_EMBEDDING_DRIVER=sdk, define an "openai-compatible" '
+                .'provider with that url in config/ai.php, set RAG_EMBEDDING_PROVIDER to its name, then run '
+                .'`php artisan rag:reindex --stale`.',
+                is_string($host) && $host !== '' ? "[{$host}]" : 'the configured base_url',
+            ));
         }
 
-        return $this->sdk([...$config, 'provider' => $config['provider'] ?? 'openai']);
+        $this->warnOnce('openai-driver', '[laravel-rag] The "openai" embedding driver is deprecated; use "sdk" with RAG_EMBEDDING_PROVIDER=openai.');
+
+        $provider = $config['provider'] ?? null;
+
+        return $this->sdk([...$config, 'provider' => $provider === null || $provider === '' ? 'openai' : $provider]);
     }
 
     /**

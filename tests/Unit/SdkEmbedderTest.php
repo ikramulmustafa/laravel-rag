@@ -6,6 +6,7 @@ use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Embedding\SdkEmbedder;
 use Ikram\Rag\Exceptions\EmbeddingFailed;
 use Laravel\Ai\Embeddings;
+use Laravel\Ai\Enums\Lab;
 use Laravel\Ai\Prompts\EmbeddingsPrompt;
 
 beforeEach(function (): void {
@@ -15,18 +16,6 @@ beforeEach(function (): void {
 function openAiEmbedder(int $batchSize = 96, bool $sendDimensions = true): SdkEmbedder
 {
     return new SdkEmbedder('openai', 'openai', 'text-embedding-3-small', 64, $sendDimensions, $batchSize);
-}
-
-/** Catch what `$fn` throws, so a test can look at the whole exception. */
-function caught(Closure $fn): Throwable
-{
-    try {
-        $fn();
-    } catch (Throwable $e) {
-        return $e;
-    }
-
-    throw new RuntimeException('Expected an exception, nothing was thrown.');
 }
 
 it('sends the configured dimensions with every request', function (): void {
@@ -86,7 +75,7 @@ it('refuses a response with vectors of the wrong width', function (): void {
     $e = caught(fn () => openAiEmbedder()->embed(['refund policy']));
 
     expect($e)->toBeInstanceOf(EmbeddingFailed::class)
-        ->and($e->getMessage())->toContain('64')
+        ->and($e->getMessage())->toContain('a vector of width 32; rag.embedding.dimensions is 64')
         ->and($e->getMessage())->not->toMatch('/\d\.\d{3}/')
         ->and(strtolower($e->getMessage()))->not->toContain('http');
 });
@@ -142,11 +131,26 @@ it('rejects a failover list of providers', function (): void {
         ->toThrow(InvalidArgumentException::class, 'must name a single provider; failover would store vectors under the wrong model id');
 });
 
-it('names an unknown provider and points at config/ai.php', function (): void {
-    expect(fn () => SdkEmbedder::fromConfig(['provider' => 'nope'], 'openai'))
-        ->toThrow(InvalidArgumentException::class, '[nope]')
-        ->and(fn () => SdkEmbedder::fromConfig(['provider' => 'nope'], 'openai'))
-        ->toThrow(InvalidArgumentException::class, 'config/ai.php');
+it('names an undefined provider and points at config/ai.php', function (): void {
+    $e = caught(fn () => SdkEmbedder::fromConfig(['provider' => 'nope'], 'openai'));
+
+    expect($e)->toBeInstanceOf(InvalidArgumentException::class)
+        ->and($e->getMessage())->toBe('Embedding provider [nope] is not defined. Add it to the providers in config/ai.php, or set RAG_EMBEDDING_PROVIDER to one that is.')
+        ->and($e->getPrevious())->toBeInstanceOf(InvalidArgumentException::class);
+});
+
+it('says when a defined provider could not be built, rather than calling it undefined', function (): void {
+    config()->set('ai.providers.broken', ['driver' => 'no-such-driver']);
+
+    expect(fn () => SdkEmbedder::fromConfig(['provider' => 'broken'], 'openai'))
+        ->toThrow(InvalidArgumentException::class, 'Embedding provider [broken] is defined in config/ai.php but could not be built. Check its `driver` setting.');
+});
+
+it('accepts a Lab enum as the provider', function (): void {
+    config()->set('ai.providers.ollama', ['driver' => 'ollama']);
+
+    expect(SdkEmbedder::fromConfig(['provider' => Lab::Ollama, 'dimensions' => 64], 'openai')->modelId())
+        ->toBe('ollama:nomic-embed-text:64');
 });
 
 it('refuses to guess when no provider is configured anywhere', function (): void {
