@@ -48,6 +48,12 @@ return [
         'batch_size' => (int) env('RAG_EMBEDDING_BATCH_SIZE', 96),
         'timeout' => (int) env('RAG_EMBEDDING_TIMEOUT', 30),
         'cache' => (bool) env('RAG_EMBEDDING_CACHE', false),
+
+        // Deprecated, and not used to send anything. It exists only so the package
+        // can refuse a custom endpoint left over from 0.2, instead of quietly
+        // sending that endpoint's documents and token to OpenAI. Move to an
+        // "openai-compatible" provider in config/ai.php, then remove this.
+        'base_url' => env('RAG_EMBEDDING_BASE_URL'),
     ],
 
     /*

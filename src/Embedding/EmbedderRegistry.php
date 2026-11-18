@@ -16,12 +16,16 @@ use UnexpectedValueException;
  * SDK), `fake` (deterministic, network-free) and `openai`, a deprecated alias
  * kept because a published 0.2 config still says `driver => 'openai'` and
  * `mergeConfigFrom` is shallow, so those apps would otherwise fail to boot on
- * upgrade. The alias goes in 1.0. It refuses a 0.2 config whose base_url
- * pointed somewhere other than OpenAI, since it can no longer honour it.
+ * upgrade. The alias goes in 1.0.
  *
- * A container singleton, so the deprecation warning is tracked per application
- * instance rather than in static state: each app warns once, and the next
- * test's fresh app warns again.
+ * Both SDK-backed drivers refuse a 0.2 `base_url` that pointed somewhere other
+ * than OpenAI: 0.3 can't honour it, and carrying on would send the documents,
+ * with the token that was meant for that endpoint, to the SDK provider instead.
+ * Custom drivers and `fake` never send anything there, so they are not checked.
+ *
+ * A container singleton, so the warnings are tracked per application instance
+ * rather than in static state: each app warns once, and the next test's fresh
+ * app warns again.
  */
 final class EmbedderRegistry
 {
@@ -61,6 +65,8 @@ final class EmbedderRegistry
             implode(', ', $this->drivers()),
         ));
 
+        $this->warnIfConfigPredates03();
+
         $embedder = $factory($this->container);
 
         if (! $embedder instanceof Embedder) {
@@ -85,28 +91,41 @@ final class EmbedderRegistry
     {
         $config = $this->config();
 
-        // 0.2 read the endpoint from here; now only config/ai.php does. Carrying
-        // on would send the documents, and the credential meant for that endpoint,
-        // to api.openai.com instead, so refuse before anything is built.
-        $baseUrl = $config['base_url'] ?? null;
-
-        if (is_string($baseUrl) && $baseUrl !== '' && rtrim($baseUrl, '/') !== self::OPENAI_BASE_URL) {
-            $host = parse_url($baseUrl, PHP_URL_HOST);
-
-            throw new InvalidArgumentException(sprintf(
-                'The deprecated "openai" embedding driver no longer reads rag.embedding.base_url, so it would send your '
-                .'documents to api.openai.com instead of %s. Set RAG_EMBEDDING_DRIVER=sdk, define an "openai-compatible" '
-                .'provider with that url in config/ai.php, set RAG_EMBEDDING_PROVIDER to its name, then run '
-                .'`php artisan rag:reindex --stale`.',
-                is_string($host) && $host !== '' ? "[{$host}]" : 'the configured base_url',
-            ));
-        }
+        $this->refuseCustomEndpoint($config);
 
         $this->warnOnce('openai-driver', '[laravel-rag] The "openai" embedding driver is deprecated; use "sdk" with RAG_EMBEDDING_PROVIDER=openai.');
 
         $provider = $config['provider'] ?? null;
 
         return $this->sdk([...$config, 'provider' => $provider === null || $provider === '' ? 'openai' : $provider]);
+    }
+
+    /**
+     * 0.2 read the endpoint from `base_url`; now only config/ai.php does. A
+     * custom one, whether from a published 0.2 config or RAG_EMBEDDING_BASE_URL
+     * alone, means the documents and the token in OPENAI_API_KEY were meant for
+     * another server, so refuse before anything is built or sent.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    private function refuseCustomEndpoint(array $config): void
+    {
+        $baseUrl = $config['base_url'] ?? null;
+
+        if (! is_string($baseUrl) || $baseUrl === '' || rtrim($baseUrl, '/') === self::OPENAI_BASE_URL) {
+            return;
+        }
+
+        $host = parse_url($baseUrl, PHP_URL_HOST);
+
+        throw new InvalidArgumentException(sprintf(
+            'rag.embedding.base_url (RAG_EMBEDDING_BASE_URL) points at %s, but 0.3 no longer reads it, so embedding '
+            .'would send your documents to the SDK provider (api.openai.com for "openai") instead. '
+            .'Set RAG_EMBEDDING_DRIVER=sdk, define an "openai-compatible" provider with that url in config/ai.php, '
+            .'set RAG_EMBEDDING_PROVIDER to its name, remove base_url / RAG_EMBEDDING_BASE_URL, '
+            .'then run `php artisan rag:reindex --stale`.',
+            is_string($host) && $host !== '' ? "[{$host}]" : 'a custom endpoint',
+        ));
     }
 
     /**
@@ -118,6 +137,8 @@ final class EmbedderRegistry
      */
     private function sdk(array $config): Embedder
     {
+        $this->refuseCustomEndpoint($config);
+
         $default = config('ai.default_for_embeddings');
 
         if ($default instanceof Lab) {
@@ -137,6 +158,23 @@ final class EmbedderRegistry
         $config = config('rag.embedding', []);
 
         return is_array($config) ? $config : [];
+    }
+
+    /**
+     * `mergeConfigFrom` is shallow, so a published 0.2 config/rag.php replaces
+     * the whole `embedding` block, and with it every key 0.3 added. Their env
+     * vars then do nothing, silently. `provider` is the tell: 0.2 never had it.
+     */
+    private function warnIfConfigPredates03(): void
+    {
+        if (array_key_exists('provider', $this->config())) {
+            return;
+        }
+
+        $this->warnOnce('predates-0.3', '[laravel-rag] Your published config/rag.php predates 0.3: the new keys '
+            .'(embedding provider, send_dimensions, timeout, cache, retrieval.rerank, the eval threshold env vars) '
+            .'are missing, so their env vars are ignored. Re-publish it with '
+            .'`php artisan vendor:publish --tag=rag-config --force`, or copy the new keys in.');
     }
 
     private function warnOnce(string $key, string $message): void
