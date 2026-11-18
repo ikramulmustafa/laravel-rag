@@ -9,6 +9,9 @@ use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Facades\Rag;
 use Ikram\Rag\RagManager;
 use Ikram\Rag\Tests\TestCase;
+use Laravel\Ai\Embeddings;
+use Laravel\Ai\Gateway\FakeEmbeddingGateway;
+use Laravel\Ai\Prompts\EmbeddingsPrompt;
 
 uses(TestCase::class)->in('Feature', 'Unit');
 
@@ -19,11 +22,42 @@ uses(TestCase::class)->in('Feature', 'Unit');
 function useEmbedder(Embedder $embedder): void
 {
     app()->instance(Embedder::class, $embedder);
+    forgetEmbedderDependents();
+}
+
+/**
+ * Drop the embedder itself as well, so the next resolve goes back through the
+ * driver registry and picks up whatever `rag.embedding` now says.
+ */
+function rebuildEmbedder(): void
+{
+    app()->forgetInstance(Embedder::class);
+    forgetEmbedderDependents();
+}
+
+function forgetEmbedderDependents(): void
+{
     app()->forgetInstance(Retriever::class);
     app()->forgetInstance(Ingestor::class);
     app()->forgetInstance('rag');
     app()->forgetInstance(RagManager::class);
     Rag::clearResolvedInstance('rag');
+}
+
+/**
+ * Fake the SDK's embedding gateway. By default every request is answered by the
+ * deterministic FakeEmbedder at the width it asked for (64 when it asked for
+ * none, as native mode does), so SDK-driven tests still assert real retrieval
+ * ordering. A request the fake does not answer throws instead of reaching a
+ * provider.
+ *
+ * @param  (Closure(EmbeddingsPrompt): mixed)|null  $respond
+ */
+function fakeSdkEmbeddings(?Closure $respond = null): FakeEmbeddingGateway
+{
+    return Embeddings::fake(
+        $respond ?? fn (EmbeddingsPrompt $prompt): array => (new FakeEmbedder($prompt->dimensions ?: 64))->embed(array_values($prompt->inputs)),
+    )->preventStrayEmbeddings();
 }
 
 /**

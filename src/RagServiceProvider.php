@@ -12,14 +12,11 @@ use Ikram\Rag\Contracts\Chunker;
 use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Documents\Ingestor;
-use Ikram\Rag\Embedding\FakeEmbedder;
-use Ikram\Rag\Embedding\OpenAIEmbedder;
+use Ikram\Rag\Embedding\EmbedderRegistry;
 use Ikram\Rag\Eval\EvalRunRecorder;
 use Ikram\Rag\Retrieval\VectorRetriever;
 use Illuminate\Contracts\Container\Container;
-use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Support\ServiceProvider;
-use InvalidArgumentException;
 
 final class RagServiceProvider extends ServiceProvider
 {
@@ -27,23 +24,10 @@ final class RagServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__.'/../config/rag.php', 'rag');
 
-        $this->app->singleton(Embedder::class, function (Container $app): Embedder {
-            $driver = config('rag.embedding.driver', 'openai');
+        $this->app->singleton(EmbedderRegistry::class, fn (Container $app): EmbedderRegistry => new EmbedderRegistry($app));
 
-            return match ($driver) {
-                'openai' => new OpenAIEmbedder(
-                    http: $app->make(HttpFactory::class),
-                    apiKey: (string) config('rag.embedding.api_key'),
-                    model: (string) config('rag.embedding.model'),
-                    baseUrl: (string) config('rag.embedding.base_url'),
-                    batchSize: (int) config('rag.embedding.batch_size'),
-                ),
-                'fake' => new FakeEmbedder((int) config('rag.embedding.dimensions', 64)),
-                default => throw new InvalidArgumentException(
-                    "Unknown embedding driver [{$driver}]. Supported: openai, fake."
-                ),
-            };
-        });
+        $this->app->singleton(Embedder::class, fn (Container $app): Embedder => $app->make(EmbedderRegistry::class)
+            ->make((string) config('rag.embedding.driver', 'sdk')));
 
         $this->app->singleton(Chunker::class, fn (): Chunker => new RecursiveChunker(
             size: (int) config('rag.chunking.size'),
@@ -69,8 +53,8 @@ final class RagServiceProvider extends ServiceProvider
         ));
 
         $this->app->singleton('rag', fn (Container $app): RagManager => new RagManager(
-            retriever: $app->make(Retriever::class),
-            ingestor: $app->make(Ingestor::class),
+            container: $app,
+            embedders: $app->make(EmbedderRegistry::class),
         ));
 
         $this->app->alias('rag', RagManager::class);

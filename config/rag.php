@@ -20,21 +20,34 @@ return [
     |--------------------------------------------------------------------------
     | Embedding
     |--------------------------------------------------------------------------
-    | `dimensions` must match the model. It is written into the pgvector column
-    | at migration time, so changing it later requires a migration and a reindex,
-    | not just a config edit.
+    | Embeddings go through the Laravel AI SDK. Credentials and endpoints live
+    | in config/ai.php; `provider` names one of its providers, and null means
+    | `ai.default_for_embeddings`. It must be a single name: an SDK failover
+    | list would store another model's vectors under this model's id.
+    |
+    | `model` null means the provider's default embeddings model.
+    |
+    | `dimensions` must match the model. Every returned vector is checked against
+    | it, and it is written into the pgvector column at migration time, so
+    | changing it later requires a migration and a reindex, not just a config
+    | edit. `send_dimensions` asks the provider for that width; turn it off
+    | ("native" mode) for models that reject a dimensions parameter, such as
+    | Ollama models and many OpenAI-compatible servers. The width is still
+    | checked.
     |
     | The `fake` driver is deterministic and network-free. It exists so the test
     | suite can assert real retrieval ordering without an API key.
     */
 
     'embedding' => [
-        'driver' => env('RAG_EMBEDDING_DRIVER', 'openai'),
-        'model' => env('RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
+        'driver' => env('RAG_EMBEDDING_DRIVER', 'sdk'),
+        'provider' => env('RAG_EMBEDDING_PROVIDER'),
+        'model' => env('RAG_EMBEDDING_MODEL'),
         'dimensions' => (int) env('RAG_EMBEDDING_DIMENSIONS', 1536),
-        'api_key' => env('OPENAI_API_KEY'),
-        'base_url' => env('RAG_EMBEDDING_BASE_URL', 'https://api.openai.com/v1'),
+        'send_dimensions' => (bool) env('RAG_EMBEDDING_SEND_DIMENSIONS', true),
         'batch_size' => (int) env('RAG_EMBEDDING_BATCH_SIZE', 96),
+        'timeout' => (int) env('RAG_EMBEDDING_TIMEOUT', 30),
+        'cache' => (bool) env('RAG_EMBEDDING_CACHE', false),
     ],
 
     /*
