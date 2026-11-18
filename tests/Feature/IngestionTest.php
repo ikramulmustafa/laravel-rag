@@ -158,3 +158,81 @@ it('skips unchanged content whose chunks carry the legacy id of the current mode
     expect($ingestor->ingest('doc.md', $content)->skipped)->toBeTrue()
         ->and(Chunk::first()->embedding_model)->toBe('fake:deterministic-hash');
 });
+
+it('stores the source text on the document', function (): void {
+    $text = 'The exact source text, kept so a reindex needs no original file.';
+
+    app(Ingestor::class)->ingest('doc.md', $text);
+
+    expect(Document::first()->content)->toBe($text);
+});
+
+it('backfills content when an unchanged legacy document is skipped', function (): void {
+    $spy = useSpyEmbedder();
+    $text = 'Legacy document ingested before content was stored.';
+
+    Rag::ingest('doc.md', $text);
+    Document::query()->update(['content' => null]);
+    $before = $spy->calls;
+
+    $result = Rag::ingest('doc.md', $text);
+
+    expect($result->skipped)->toBeTrue()
+        ->and(Document::first()->content)->toBe($text)
+        ->and($spy->calls)->toBe($before);
+});
+
+it('re-embeds unchanged content when forced', function (): void {
+    $ingestor = app(Ingestor::class);
+    $text = 'Content that is unchanged but must be embedded again.';
+
+    $ingestor->ingest('doc.md', $text);
+    $second = $ingestor->ingest('doc.md', $text, force: true);
+
+    expect($second->skipped)->toBeFalse()
+        ->and($second->chunkCount)->toBeGreaterThan(0);
+});
+
+it('removes stale chunks when content becomes empty', function (): void {
+    $ingestor = app(Ingestor::class);
+
+    $first = $ingestor->ingest('doc.md', str_repeat('some words to chunk. ', 30));
+    $second = $ingestor->ingest('doc.md', '');
+
+    expect($second->skipped)->toBeTrue()
+        ->and($second->documentId)->toBe($first->documentId)
+        ->and(Chunk::count())->toBe(0)
+        ->and(Document::first()->content_hash)->toBe(Document::hashFor(''))
+        ->and(Document::first()->content)->toBe('');
+});
+
+it('writes nothing for empty content of an unknown document', function (): void {
+    $result = app(Ingestor::class)->ingest('new.md', '');
+
+    expect($result->skipped)->toBeTrue()
+        ->and(Document::count())->toBe(0);
+});
+
+it('returns the existing document id when skipping', function (): void {
+    $ingestor = app(Ingestor::class);
+
+    $first = $ingestor->ingest('doc.md', 'Same text both times.');
+    $second = $ingestor->ingest('doc.md', 'Same text both times.');
+
+    expect($second->skipped)->toBeTrue()
+        ->and($second->documentId)->toBe($first->documentId);
+});
+
+it('does not keep a confirm callback on the shared ingestor', function (): void {
+    config()->set('rag.ingestion.token_warning_threshold', 1);
+    app()->forgetInstance(Ingestor::class);
+    app()->forgetInstance('rag');
+    app()->forgetInstance(RagManager::class);
+    Rag::clearResolvedInstance('rag');
+
+    $confirming = app(Ingestor::class)->confirmWith(fn (): bool => false);
+
+    expect($confirming)->not->toBe(app(Ingestor::class))
+        ->and(Rag::ingest('big.md', str_repeat('plenty of words to embed. ', 200))->skipped)->toBeFalse()
+        ->and(Document::count())->toBe(1);
+});

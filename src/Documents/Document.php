@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * @property string $source
  * @property string $collection
  * @property string $content_hash
+ * @property ?string $content
  * @property array<string, mixed> $metadata
  */
 final class Document extends Model

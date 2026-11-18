@@ -29,13 +29,17 @@ final class Ingestor
      * embedding API. Return false to abort. The console command wires this to a
      * prompt; leaving it unset means non-interactive callers proceed unimpeded.
      *
+     * Returns a clone. The container shares one Ingestor, so mutating it would let
+     * one command's prompt silently gate every later ingest in the same process.
+     *
      * @param  callable(int, int): bool  $callback
      */
     public function confirmWith(callable $callback): self
     {
-        $this->confirm = $callback;
+        $clone = clone $this;
+        $clone->confirm = $callback;
 
-        return $this;
+        return $clone;
     }
 
     /**
@@ -46,6 +50,7 @@ final class Ingestor
         string $content,
         string $collection = 'default',
         array $metadata = [],
+        bool $force = false,
     ): IngestResult {
         $hash = Document::hashFor($content);
 
@@ -57,16 +62,38 @@ final class Ingestor
         // Unchanged content is the single largest source of accidental embedding
         // spend. Re-ingesting a nightly export of 10k documents where nine have
         // changed should cost nine documents, not ten thousand.
-        if ($existing !== null
+        if (! $force
+            && $existing !== null
             && $existing->content_hash === $hash
             && $this->modelMatchesExistingChunks($existing)) {
-            return new IngestResult($source, 0, 0, skipped: true);
+            // Documents ingested before the text was stored get it for free here,
+            // so a later reindex can rebuild them without the original file.
+            if ($existing->content === null) {
+                $existing->content = $content;
+                $existing->save();
+            }
+
+            return new IngestResult($source, 0, $existing->id, skipped: true);
         }
 
         $chunks = $this->chunker->chunk($content);
 
         if ($chunks === []) {
-            return new IngestResult($source, 0, 0, skipped: true);
+            if ($existing === null) {
+                return new IngestResult($source, 0, 0, skipped: true);
+            }
+
+            // The document was emptied. Leaving its old chunks would keep
+            // retrieving text the source no longer contains.
+            return $this->connection->transaction(function () use ($existing, $source, $hash, $content, $metadata): IngestResult {
+                $existing->content_hash = $hash;
+                $existing->content = $content;
+                $existing->metadata = $metadata;
+                $existing->save();
+                $existing->chunks()->delete();
+
+                return new IngestResult($source, 0, $existing->id, skipped: true);
+            });
         }
 
         $texts = array_map(static fn ($c): string => $c->text, $chunks);
@@ -84,12 +111,13 @@ final class Ingestor
         $this->guardVectors($source, $vectors, count($chunks));
 
         return $this->connection->transaction(function () use (
-            $existing, $source, $collection, $hash, $metadata, $chunks, $vectors,
+            $existing, $source, $collection, $hash, $content, $metadata, $chunks, $vectors,
         ): IngestResult {
             $document = $existing ?? new Document;
             $document->source = $source;
             $document->collection = $collection;
             $document->content_hash = $hash;
+            $document->content = $content;
             $document->metadata = $metadata;
             $document->save();
 
