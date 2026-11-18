@@ -238,8 +238,8 @@ function seedChunk(string $collection, string $source, array $vector): void
  * i % width raised by a step that grows with i / width.
  *
  * Distinct matters. pgvector stores identical vectors as one HNSW element with
- * several heap rows, so a scan capped at ef_search elements can hand back more
- * than ef_search rows. The fake embedder's 64 hash buckets make hundreds of
+ * several heap rows, so a scan bounded by ef_search elements can hand back many
+ * more rows than that. The fake embedder's 64 hash buckets make hundreds of
  * near-identical texts collapse onto a few dozen vectors, which hid the cap.
  *
  * @param  list<float>  $base
@@ -288,15 +288,16 @@ function hnswDiagnostics(string $plan): string
 }
 
 /*
- * An HNSW index scan stops at hnsw.ef_search elements (40 by default), and
- * filters are applied after it, so without the retriever's own settings a limit
- * above 40 came back short and a small collection got only its share of those 40.
+ * An HNSW index scan returns about hnsw.ef_search rows (40 by default; the bound
+ * is approximate, the layer-0 search can yield a few more), and filters are
+ * applied after it. So without the retriever's own settings a limit well above
+ * 40 came back short, and a small collection got only its share of those rows.
  */
 it('returns more rows than the index default and fills a filtered search on a small collection', function (): void {
     $embedder = app(Embedder::class);
 
     // 380 rows close to the query in a large collection, 20 (5%) further from it in
-    // a small one, so the 40 nearest are all from the large collection.
+    // a small one, so the rows nearest the query all come from the large collection.
     foreach (distinctVectorsNear($embedder->embed(['refunds'])[0], 380) as $i => $vector) {
         seedChunk('bulk', "bulk/{$i}.md", $vector);
     }
@@ -324,11 +325,13 @@ it('returns more rows than the index default and fills a filtered search on a sm
     $diagnostics = hnswDiagnostics($plan);
 
     // The precondition, proved rather than assumed: every vector is its own index
-    // element, the index is what answers, and at its default it stops at 40.
+    // element, the index is what answers, and at its default it stops short of the
+    // 60 rows asked for. Only "short" is asserted: the size of the cap is
+    // approximate (45 rows was seen at ef_search 40 on pgvector 0.8.7).
     expect((int) DB::scalar('SELECT count(DISTINCT embedding::text) FROM rag_chunks'))
         ->toBe((int) DB::scalar('SELECT count(*) FROM rag_chunks'), $diagnostics)
         ->and(str_contains($plan, 'rag_chunks_embedding_idx'))->toBeTrue("The raw query did not use the HNSW index.\n{$diagnostics}")
-        ->and($capped)->toBeLessThanOrEqual(40, "The index at its default ef_search should stop at 40 rows.\n{$diagnostics}");
+        ->and($capped)->toBeLessThan(60, "The index at its default ef_search should stop short of 60 rows.\n{$diagnostics}");
 
     DB::enableQueryLog();
 
@@ -374,6 +377,7 @@ it('keeps an ef_search the app tuned higher than the limit needs', function (): 
 
     expect($sql)->toContain('SET LOCAL hnsw.ef_search = 200')
         ->and($sql)->not->toContain('SET LOCAL hnsw.ef_search = 40')
-        // SET LOCAL ended with the search's transaction; the app's value is untouched.
+        // Settings only, no row counts: the cap's size is approximate. SET LOCAL
+        // ended with the search's transaction, so the app's own value is untouched.
         ->and(DB::scalar('SHOW hnsw.ef_search'))->toBe('200');
 })->group('pgsql');
