@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Documents\Chunk;
 use Ikram\Rag\Documents\Document;
@@ -9,6 +10,7 @@ use Ikram\Rag\Documents\Ingestor;
 use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Exceptions\MixedEmbeddingModels;
 use Ikram\Rag\Facades\Rag;
+use Ikram\Rag\Retrieval\Vector;
 use Ikram\Rag\Storage\PgvectorColumn;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -197,4 +199,65 @@ it('says to migrate when there is no chunks table to resize', function (): void 
     $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
         ->expectsOutputToContain('php artisan migrate')
         ->assertFailed();
+})->group('pgsql');
+
+/*
+ * An HNSW index scan stops at hnsw.ef_search rows (40 by default), and filters
+ * are applied after it, so without the retriever's own settings a limit above
+ * 40 came back short and a small collection got only its share of those 40.
+ */
+it('returns more rows than the index default and fills a filtered search on a small collection', function (): void {
+    $ingestor = app(Ingestor::class);
+
+    // One chunk each: 380 in a large collection, 20 (5%) in a small one.
+    for ($i = 0; $i < 380; $i++) {
+        $ingestor->ingest("bulk/{$i}.md", "Bulk note {$i} on refunds, shipping and annual leave.", 'bulk');
+    }
+
+    for ($i = 0; $i < 20; $i++) {
+        $ingestor->ingest("rare/{$i}.md", "Rare note {$i} on warranty claims for refunds.", 'rare');
+    }
+
+    // Leave the planner no cheaper plan than the HNSW index, as on a large table.
+    DB::statement('SET enable_seqscan = off');
+    DB::statement('SET enable_sort = off');
+
+    $literal = Vector::toLiteral(app(Embedder::class)->embed(['refunds'])[0]);
+
+    // The cap is real here: the index alone, at its default, stops at 40.
+    expect(count(DB::select('SELECT id FROM rag_chunks ORDER BY embedding <=> ?::vector LIMIT 60', [$literal])))
+        ->toBeLessThanOrEqual(40);
+
+    DB::enableQueryLog();
+
+    $all = app(Retriever::class)->retrieve('refunds', 60);
+    $rare = app(Retriever::class)->retrieve('refunds', 30, ['collection' => 'rare']);
+
+    $sql = array_column(DB::getQueryLog(), 'query');
+
+    expect($all->count())->toBe(60)
+        ->and($rare->count())->toBe(20)
+        ->and(collect($rare->sources())->every(fn (string $s): bool => str_starts_with($s, 'rare/')))->toBeTrue()
+        ->and($sql)->toContain('SET LOCAL hnsw.ef_search = 240')
+        ->and($sql)->toContain('SET LOCAL hnsw.ef_search = 120')
+        ->and($sql)->toContain('SET LOCAL hnsw.iterative_scan = relaxed_order')
+        ->and(collect($sql)->contains(fn (string $q): bool => str_contains($q, '<=>') && str_contains($q, '::vector')))->toBeTrue();
+
+    // Still in score order, whatever order a relaxed scan produced.
+    $scores = array_map(fn ($c): float => $c->score, $rare->citations);
+    $sorted = $scores;
+    rsort($sorted);
+
+    expect($scores)->toBe($sorted);
+})->group('pgsql');
+
+it('does not ask for an iterative scan without filters', function (): void {
+    DB::enableQueryLog();
+
+    app(Retriever::class)->retrieve('refund for damaged goods', 3);
+
+    $sql = array_column(DB::getQueryLog(), 'query');
+
+    expect($sql)->toContain('SET LOCAL hnsw.ef_search = 40')
+        ->and($sql)->not->toContain('SET LOCAL hnsw.iterative_scan = relaxed_order');
 })->group('pgsql');

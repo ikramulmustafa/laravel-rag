@@ -9,6 +9,7 @@ use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Embedding\EmbeddingModelId;
 use Ikram\Rag\Exceptions\DimensionMismatch;
 use Ikram\Rag\Exceptions\MixedEmbeddingModels;
+use Ikram\Rag\Storage\HnswSearch;
 use Illuminate\Database\Connection;
 use Illuminate\Database\Query\Builder;
 use InvalidArgumentException;
@@ -191,27 +192,60 @@ final class VectorRetriever implements Retriever
     }
 
     /**
+     * In a transaction of its own so the index settings are SET LOCAL: they last
+     * for this query only and never leak into the app's session on that
+     * connection. See HnswSearch for why they are needed.
+     *
      * @param  list<float>  $vector
      * @param  array<string, mixed>  $filters
      * @return list<object>
      */
     private function searchWithPgvector(array $vector, int $limit, array $filters): array
     {
-        $literal = Vector::toLiteral($vector);
+        return $this->connection->transaction(function () use ($vector, $limit, $filters): array {
+            // ef_search = min(1000, max(40, limit × 4)). An integer computed here, not input.
+            $this->connection->statement('SET LOCAL hnsw.ef_search = '.HnswSearch::efSearchFor($limit));
 
-        // A NULL embedding is a row a resize has cleared and not yet re-embedded. It
-        // is left out, so a half-finished reindex returns fewer results, not errors.
-        $query = $this->scopedChunks($filters)
-            ->whereNotNull('c.embedding')
-            ->selectRaw(
-                'c.id, c.document_id, c.text, c.position, d.source, '
-                .'1 - (c.embedding <=> ?::vector) as score',
-                [$literal],
-            )
-            ->orderByRaw('c.embedding <=> ?::vector', [$literal])
-            ->limit($limit);
+            // Filters cut the scan's rows after the fact, so let the index keep
+            // scanning until the limit is met. Only where pgvector has the setting
+            // (0.8.0+); older versions reject it. Read per search, not remembered,
+            // because the retriever outlives requests and the extension can be upgraded.
+            $relaxed = $filters !== [] && HnswSearch::supportsIterativeScan($this->pgvectorVersion());
 
-        return $query->get()->all();
+            if ($relaxed) {
+                $this->connection->statement('SET LOCAL hnsw.iterative_scan = relaxed_order');
+            }
+
+            $literal = Vector::toLiteral($vector);
+
+            // A NULL embedding is a row a resize has cleared and not yet re-embedded. It
+            // is left out, so a half-finished reindex returns fewer results, not errors.
+            $rows = $this->scopedChunks($filters)
+                ->whereNotNull('c.embedding')
+                ->selectRaw(
+                    'c.id, c.document_id, c.text, c.position, d.source, '
+                    .'1 - (c.embedding <=> ?::vector) as score',
+                    [$literal],
+                )
+                ->orderByRaw('c.embedding <=> ?::vector', [$literal])
+                ->limit($limit)
+                ->get()
+                ->all();
+
+            // relaxed_order may hand rows back slightly out of distance order.
+            if ($relaxed) {
+                usort($rows, static fn (object $a, object $b): int => (float) $b->score <=> (float) $a->score);
+            }
+
+            return $rows;
+        });
+    }
+
+    private function pgvectorVersion(): ?string
+    {
+        $version = $this->connection->scalar("SELECT extversion FROM pg_extension WHERE extname = 'vector'");
+
+        return is_string($version) ? $version : null;
     }
 
     /**
