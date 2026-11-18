@@ -25,8 +25,13 @@ beforeAll(function () use ($ragDatabase): void {
 
 afterAll(function () use ($ragDatabase): void {
     TestCase::$bootConfig = [];
-    DB::purge('rag');
     @unlink($ragDatabase);
+});
+
+// Not in afterAll: by then Testbench has flushed the container and the DB facade
+// has nothing to resolve. Purging here lets go of the sqlite file while the app lives.
+afterEach(function (): void {
+    DB::purge('rag');
 });
 
 it('stores documents and chunks on the rag connection when it differs from the default', function (): void {

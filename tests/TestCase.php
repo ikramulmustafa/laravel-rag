@@ -39,7 +39,8 @@ abstract class TestCase extends Orchestra
 
         // The pgsql group runs against a real Postgres with pgvector, which CI
         // provides. Local runs and the main matrix never set DB_CONNECTION=pgsql,
-        // so they stay on SQLite.
+        // so they stay on SQLite. Setting it moves the whole process to Postgres,
+        // so only the pgsql group should be run that way.
         if (env('DB_CONNECTION') === 'pgsql') {
             $app['config']->set('database.default', 'pgsql');
             $app['config']->set('database.connections.pgsql', [

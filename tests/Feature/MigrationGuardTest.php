@@ -14,8 +14,13 @@ beforeAll(function () use ($otherDatabase): void {
 
 afterAll(function () use ($otherDatabase): void {
     TestCase::$bootConfig = [];
-    DB::purge('other');
     @unlink($otherDatabase);
+});
+
+// Not in afterAll: by then Testbench has flushed the container and the DB facade
+// has nothing to resolve. Purging here lets go of the sqlite file while the app lives.
+afterEach(function (): void {
+    DB::purge('other');
 });
 
 it('refuses to run when the tables live on the default connection but RAG_CONNECTION points elsewhere', function () use ($otherDatabase): void {

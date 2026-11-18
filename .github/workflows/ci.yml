@@ -105,10 +105,12 @@ jobs:
 
       - run: composer update --prefer-dist --no-interaction --no-progress
 
+      # --fail-on-skipped: a missing DB_CONNECTION would otherwise skip every test
+      # and leave this step green.
       # Before the ingest: these tests migrate and roll back their own schema, so
       # the database is empty again (bar the migrations table) when it finishes.
       - name: Postgres-only tests (pgvector path)
-        run: vendor/bin/pest --group=pgsql
+        run: vendor/bin/pest --group=pgsql --fail-on-skipped
 
       - name: Ingest the fixture corpus
         run: |
