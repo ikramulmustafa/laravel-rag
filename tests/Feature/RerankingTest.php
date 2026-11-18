@@ -166,3 +166,52 @@ it('keeps vector order when fewer than two citations have text', function (): vo
     expect(textsOf($result))->toBe(['alpha', '']);
     Reranking::assertNothingReranked();
 });
+
+it('uses each ranked index once', function (): void {
+    Reranking::fake([[
+        new RankedDocument(1, 'beta', 0.9),
+        new RankedDocument(1, 'beta', 0.8),
+        new RankedDocument(0, 'alpha', 0.4),
+    ]]);
+
+    $result = rerankingOver(stubRetriever(['alpha', 'beta', 'gamma']))->retrieve('q');
+
+    expect(textsOf($result))->toBe(['beta', 'alpha']);
+});
+
+it('rejects a candidates multiplier outside 1 to 10', function (): void {
+    $e = caught(fn () => new RerankingRetriever(stubRetriever([]), null, null, 11, 5, Log::channel('null')));
+
+    expect($e)->toBeInstanceOf(InvalidArgumentException::class)
+        ->and($e->getMessage())->toContain('between 1 and 10');
+});
+
+it('caps the over-fetch at the pool maximum', function (): void {
+    Reranking::fake();
+
+    $inner = stubRetriever(['alpha']);
+    rerankingOver($inner, null, 3, 50)->retrieve('q');
+
+    expect($inner->askedLimit)->toBe(100);
+});
+
+it('does not pad with unranked candidates when the reranker returns fewer than the limit', function (): void {
+    Reranking::fake([[new RankedDocument(3, 'delta', 0.7), new RankedDocument(1, 'beta', 0.6)]]);
+
+    $result = rerankingOver(stubRetriever(['alpha', 'beta', 'gamma', 'delta']), null, 4, 3)->retrieve('q');
+
+    expect(textsOf($result))->toBe(['delta', 'beta']);
+});
+
+it('words the provider error by what is wrong with it', function (): void {
+    config()->set('rag.retrieval.rerank.enabled', true);
+
+    config()->set('rag.retrieval.rerank.provider', 5);
+    app()->forgetInstance(Retriever::class);
+    expect(caught(fn () => app(Retriever::class))->getMessage())->toContain('provider name string')
+        ->and(caught(fn () => app(Retriever::class))->getMessage())->not->toContain('failover');
+
+    config()->set('rag.retrieval.rerank.provider', ['a', 'b']);
+    app()->forgetInstance(Retriever::class);
+    expect(caught(fn () => app(Retriever::class))->getMessage())->toContain('failover');
+});

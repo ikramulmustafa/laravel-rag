@@ -54,11 +54,15 @@ final class RagServiceProvider extends ServiceProvider
             $provider = config('rag.retrieval.rerank.provider');
             $provider = $provider instanceof Lab ? $provider->value : $provider;
 
-            if ($provider !== null && ! is_string($provider)) {
+            if (is_array($provider)) {
                 throw new InvalidArgumentException(
                     'rag.retrieval.rerank.provider must be a single provider name or null; failover lists are not allowed, '
                     .'because scores from different rerankers are not comparable within a run.'
                 );
+            }
+
+            if ($provider !== null && ! is_string($provider)) {
+                throw new InvalidArgumentException('rag.retrieval.rerank.provider must be a provider name string or null.');
             }
 
             $model = config('rag.retrieval.rerank.model');

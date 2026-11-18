@@ -22,6 +22,9 @@ use Throwable;
  */
 final class RerankingRetriever implements Retriever
 {
+    /** Most candidates ever fetched and sent to the reranker, whatever limit and multiplier say. */
+    public const MAX_POOL = 100;
+
     public function __construct(
         private readonly Retriever $inner,
         private readonly ?string $provider,
@@ -30,8 +33,8 @@ final class RerankingRetriever implements Retriever
         private readonly int $defaultLimit,
         private readonly LoggerInterface $logger,
     ) {
-        if ($candidates < 1) {
-            throw new InvalidArgumentException('rag.retrieval.rerank.candidates must be at least 1.');
+        if ($candidates < 1 || $candidates > 10) {
+            throw new InvalidArgumentException('rag.retrieval.rerank.candidates must be between 1 and 10.');
         }
     }
 
@@ -43,7 +46,7 @@ final class RerankingRetriever implements Retriever
             throw new InvalidArgumentException('Retrieval limit must be at least 1.');
         }
 
-        $result = $this->inner->retrieve($query, $limit * $this->candidates, $filters);
+        $result = $this->inner->retrieve($query, min($limit * $this->candidates, self::MAX_POOL), $filters);
 
         // The SDK refuses blank documents, so those citations sit out the rerank.
         $pool = array_values(array_filter(
@@ -69,12 +72,16 @@ final class RerankingRetriever implements Retriever
         }
 
         $ranked = [];
+        $seen = [];
 
+        // Deliberately not padded with unranked candidates: if the reranker returns
+        // fewer than `limit`, its judgement is that the rest are not relevant enough.
         foreach ($response->results as $document) {
-            if (! isset($pool[$document->index])) {
+            if (! isset($pool[$document->index]) || isset($seen[$document->index])) {
                 continue;
             }
 
+            $seen[$document->index] = true;
             $ranked[] = $pool[$document->index]->withRerankScore($document->score);
 
             if (count($ranked) === $limit) {
