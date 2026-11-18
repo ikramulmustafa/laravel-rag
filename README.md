@@ -51,7 +51,7 @@ Upgrading from 0.2? Read [UPGRADING.md](UPGRADING.md).
 
 ### Choose an embedding provider
 
-If you published `config/rag.php` under 0.2, it needs the 0.3 keys before any of the variables below do anything. See [UPGRADING.md](UPGRADING.md#a-published-configrag-php).
+If you published `config/rag.php` under 0.2, `RAG_EMBEDDING_PROVIDER`, `RAG_EMBEDDING_SEND_DIMENSIONS`, `RAG_EMBEDDING_TIMEOUT` and `RAG_EMBEDDING_CACHE` are ignored until you re-publish it (`RAG_EMBEDDING_DRIVER`, `RAG_EMBEDDING_MODEL`, `RAG_EMBEDDING_DIMENSIONS` and `OPENAI_API_KEY` still work). See [Step 0 of UPGRADING.md](UPGRADING.md#step-0-before-you-change-anything).
 
 Credentials and endpoints live in `config/ai.php`, which is the SDK's file. This package only says which provider and model to use:
 
@@ -187,7 +187,7 @@ Retrieved passages are document content, not instructions. The default tool desc
 
 ### Reranking
 
-Reranking is off by default. A `config/rag.php` published under 0.2 has no `retrieval.rerank` block until you [re-publish it](UPGRADING.md#a-published-configrag-php). When on, the retriever fetches `limit * candidates` chunks by vector similarity and asks an SDK reranking model to pick the best `limit`:
+Reranking is off by default. With a `config/rag.php` published under 0.2, the `RAG_RERANK*` variables are ignored until you [re-publish it](UPGRADING.md#step-0-before-you-change-anything). When on, the retriever fetches `limit * candidates` chunks by vector similarity and asks an SDK reranking model to pick the best `limit`:
 
 ```env
 RAG_RERANK=true
@@ -210,7 +210,7 @@ The SDK ships a `SimilaritySearch` tool: you point it at an Eloquent model and a
 
 | | `SimilaritySearch` (SDK) | `laravel-rag` |
 |---|---|---|
-| Databases | `usingModel()` runs `whereVectorSimilarTo()`, which needs a database with vector support: Postgres (pgvector), and MariaDB on recent Laravel 13 releases (checked against framework 13.43; Laravel 12 was not checked). It throws on MySQL and SQLite. `new SimilaritySearch(using: fn ...)` can wrap any store you query yourself | pgvector in production; SQLite and MySQL compute cosine in PHP |
+| Databases | `usingModel()` uses Laravel's `whereVectorSimilarTo()`: Postgres (pgvector) only on Laravel 12; Laravel 13.27+ adds MariaDB (needs a MariaDB 11.7+ server for the VECTOR type); throws on MySQL and SQLite. `new SimilaritySearch(using: fn ...)` can wrap any store you query yourself | pgvector in production; SQLite and MySQL compute cosine in PHP |
 | Scores | A `minSimilarity` cutoff, but the score is not returned | Every citation carries its similarity score; `min_score` drops weak matches |
 | Citations | The matching rows, minus the vector column | Chunk, source, position and score on every result |
 | Chunking and ingestion | None: you bring a table that already holds vectors | `rag:ingest` chunks, hashes, embeds and stores; unchanged documents are skipped |
@@ -384,7 +384,7 @@ flags are identical. A weekly real-model run is described under
 [Testing](#real-model-eval).
 
 Floors live in `config/rag.php`, and each can be overridden with an environment
-variable (`RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K`, `RAG_EVAL_MIN_MRR`; empty values are ignored, and a config published under 0.2 needs the new keys first):
+variable (`RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K`, `RAG_EVAL_MIN_MRR`; empty values are ignored, and with a config published under 0.2 they are ignored until you [re-publish it](UPGRADING.md#step-0-before-you-change-anything)):
 
 ```php
 'thresholds' => [
@@ -574,7 +574,7 @@ that follows scores the configuration you were trying to replace. `rag:reindex`
 re-ingests every stored document with `force`, ignoring the hash, which is what
 actually applies the change.
 
-**`embedding.*`** — provider, model, width and batching; see [Choose an embedding provider](#choose-an-embedding-provider). A change of provider or model name needs `rag:reindex --stale`. The id records the provider's driver, not its config key, so two endpoints with the same driver and model name share an id; after swapping one for the other use `rag:reindex --force`.
+**`embedding.*`** — provider, model, width and batching; see [Choose an embedding provider](#choose-an-embedding-provider). A change of provider driver or model name needs `rag:reindex --stale`. The id records the provider's driver, not its config key, so two endpoints with the same driver and model name share an id; after swapping one for the other use `rag:reindex --force`.
 
 **`retrieval.default_limit`** is used whenever no limit is passed. A limit below 1 throws, and a blank query returns an empty result without calling the embedding provider. Filter keys must match `/^[A-Za-z0-9_]+$/`.
 

@@ -10,7 +10,7 @@ such change will be listed here under **Changed** with an upgrade note.
 
 ## [Unreleased]
 
-0.3.0 rebuilds the package on the official Laravel AI SDK. Read [UPGRADING.md](UPGRADING.md) before upgrading; if you set `base_url` under 0.2 it has a step you must do first.
+0.3.0 rebuilds the package on the official Laravel AI SDK. Read [UPGRADING.md](UPGRADING.md) before upgrading; it has separate paths for apps that used OpenAI directly and apps that set a custom `base_url`, and the second must be followed in order.
 
 ### Added
 
@@ -49,7 +49,7 @@ such change will be listed here under **Changed** with an upgrade note.
 ### Deprecated
 
 - The `openai` embedding driver name, an alias for `sdk` with provider `openai`. It is removed in 1.0.
-- `rag.embedding.base_url` and `RAG_EMBEDDING_BASE_URL`. They are no longer used to send anything, and while set to anything other than `https://api.openai.com/v1` the embedder refuses to run, for the `openai` alias and the `sdk` driver alike, so documents meant for a custom endpoint are not sent to OpenAI. Move to an `openai-compatible` provider in `config/ai.php`.
+- `rag.embedding.base_url` and `RAG_EMBEDDING_BASE_URL`. They are no longer used to send anything, and while set to anything other than `https://api.openai.com/v1` the embedder refuses to run, for the `sdk` driver and the `openai` alias (not `fake` or drivers added with `Rag::extend()`), so documents meant for a custom endpoint are not sent to OpenAI. Move to an `openai-compatible` provider in `config/ai.php`.
 
 ### Removed
 
