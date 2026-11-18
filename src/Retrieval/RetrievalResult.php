@@ -58,9 +58,15 @@ final class RetrievalResult implements Countable, IteratorAggregate, JsonSeriali
         ));
     }
 
+    /**
+     * Highest vector score, not the first citation's: a reranker reorders citations,
+     * so position no longer says which one matched the query most closely.
+     */
     public function topScore(): float
     {
-        return $this->citations === [] ? 0.0 : $this->citations[0]->score;
+        return $this->citations === []
+            ? 0.0
+            : max(array_map(static fn (Citation $c): float => $c->score, $this->citations));
     }
 
     /**

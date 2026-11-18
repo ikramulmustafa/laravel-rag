@@ -15,7 +15,8 @@ interface Embedder
     public function embed(array $texts): array;
 
     /**
-     * Identifier of the model producing these vectors, e.g. "openai:text-embedding-3-small".
+     * Identifier of the model producing these vectors, e.g.
+     * "openai:text-embedding-3-small:1536" (see EmbeddingModelId).
      *
      * Stored alongside every chunk. Vectors from different models are not
      * comparable, so the retriever uses this to refuse mixed-provenance searches

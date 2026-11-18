@@ -22,6 +22,16 @@ final class Chunk extends Model
 
     protected $guarded = [];
 
+    /**
+     * Follow rag.connection so Eloquent reads and writes hit the same database as
+     * the query-builder code in the Ingestor and retriever. Without this a
+     * dedicated connection would split documents from their chunks.
+     */
+    public function getConnectionName(): ?string
+    {
+        return config('rag.connection') ?? parent::getConnectionName();
+    }
+
     /** @var array<string, string> */
     protected $casts = [
         'metadata' => 'array',

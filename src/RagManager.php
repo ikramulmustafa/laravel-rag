@@ -4,27 +4,36 @@ declare(strict_types=1);
 
 namespace Ikram\Rag;
 
+use Closure;
+use Ikram\Rag\Ai\SearchKnowledgeBase;
+use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Documents\Ingestor;
 use Ikram\Rag\Documents\IngestResult;
+use Ikram\Rag\Embedding\EmbedderRegistry;
 use Ikram\Rag\Retrieval\RetrievalResult;
+use Illuminate\Contracts\Container\Container;
 
 /**
  * Thin front door. Deliberately thin: the interesting behaviour lives in Ingestor
  * and VectorRetriever, both of which are constructor-injectable and testable on
  * their own. This exists so `Rag::retrieve(...)` reads well in application code.
+ *
+ * The retriever and ingestor are fetched when used, not when this is built, so
+ * that `Rag::extend()` in a service provider does not resolve the embedder
+ * before the driver it names has been registered.
  */
 final class RagManager
 {
     public function __construct(
-        private readonly Retriever $retriever,
-        private readonly Ingestor $ingestor,
+        private readonly Container $container,
+        private readonly EmbedderRegistry $embedders,
     ) {}
 
     /** @param array<string, mixed> $filters */
-    public function retrieve(string $query, int $limit = 5, array $filters = []): RetrievalResult
+    public function retrieve(string $query, ?int $limit = null, array $filters = []): RetrievalResult
     {
-        return $this->retriever->retrieve($query, $limit, $filters);
+        return $this->retriever()->retrieve($query, $limit, $filters);
     }
 
     /** @param array<string, mixed> $metadata */
@@ -34,16 +43,57 @@ final class RagManager
         string $collection = 'default',
         array $metadata = [],
     ): IngestResult {
-        return $this->ingestor->ingest($source, $content, $collection, $metadata);
+        return $this->ingestor()->ingest($source, $content, $collection, $metadata);
+    }
+
+    /**
+     * A search tool for a laravel/ai agent: return it from the agent's tools().
+     * The collection and filters given here are fixed; the model may only narrow
+     * the search on the `$allowedFilters` keys.
+     *
+     * @param  array<string, mixed>  $filters
+     * @param  list<string>  $allowedFilters
+     */
+    public function tool(
+        ?string $collection = null,
+        array $filters = [],
+        array $allowedFilters = [],
+        ?int $limit = null,
+        ?string $name = null,
+        ?string $description = null,
+        int $maxChars = 8000,
+    ): SearchKnowledgeBase {
+        return new SearchKnowledgeBase(
+            retriever: $this->retriever(),
+            collection: $collection,
+            filters: $filters,
+            allowedFilters: $allowedFilters,
+            limit: $limit ?? (int) config('rag.retrieval.default_limit', 5),
+            name: $name ?? 'search_knowledge_base',
+            description: $description,
+            maxChars: $maxChars,
+        );
+    }
+
+    /**
+     * Register an embedding driver for `rag.embedding.driver` to name. Call it
+     * from a service provider's register() or boot(): the embedder is a
+     * singleton, and one already built keeps the driver it was built with.
+     *
+     * @param  Closure(Container): Embedder  $factory
+     */
+    public function extend(string $driver, Closure $factory): void
+    {
+        $this->embedders->extend($driver, $factory);
     }
 
     public function retriever(): Retriever
     {
-        return $this->retriever;
+        return $this->container->make(Retriever::class);
     }
 
     public function ingestor(): Ingestor
     {
-        return $this->ingestor;
+        return $this->container->make(Ingestor::class);
     }
 }

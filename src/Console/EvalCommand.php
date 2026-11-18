@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Ikram\Rag\Console;
 
+use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Contracts\Retriever;
+use Ikram\Rag\Embedding\EmbeddingModelId;
 use Ikram\Rag\Eval\CommitSha;
+use Ikram\Rag\Eval\EvalConfig;
 use Ikram\Rag\Eval\EvalReport;
 use Ikram\Rag\Eval\EvalRunRecorder;
 use Ikram\Rag\Eval\EvalSuite;
@@ -25,7 +28,7 @@ final class EvalCommand extends Command
 
     protected $description = 'Run the retrieval eval suite and report recall, MRR and pass rate';
 
-    public function handle(Retriever $retriever, EvalRunRecorder $recorder): int
+    public function handle(Retriever $retriever, EvalRunRecorder $recorder, Embedder $embedder): int
     {
         $path = (string) ($this->option('suite') ?: config('rag.eval.suite_path'));
 
@@ -49,6 +52,7 @@ final class EvalCommand extends Command
         );
 
         $report = $suite->run($retriever);
+        $report = $report->withConfig(EvalConfig::current($embedder, $report->k));
         $baseline = $this->baseline();
 
         $regressions = $baseline === null
@@ -209,7 +213,7 @@ final class EvalCommand extends Command
 
         // The same mistake as searching across models, one level up: the deltas
         // subtract cleanly and describe nothing.
-        if ($baseline->embeddingModel !== '' && $baseline->embeddingModel !== $report->embeddingModel) {
+        if ($baseline->embeddingModel !== '' && ! EmbeddingModelId::matches($baseline->embeddingModel, $report->embeddingModel)) {
             $this->components->warn(sprintf(
                 'Baseline was recorded with a different embedding model (%s, now %s). '
                 .'Scores from different models are not comparable; re-save the baseline.',
@@ -217,6 +221,8 @@ final class EvalCommand extends Command
                 $report->embeddingModel,
             ));
         }
+
+        $this->renderConfigDifferences($report, $baseline);
 
         if ($regressions === []) {
             return;
@@ -233,6 +239,38 @@ final class EvalCommand extends Command
         }
 
         $this->newLine();
+    }
+
+    /**
+     * Say which settings differ from the baseline's. A warning only: --ci gating is
+     * about scores, and a deliberate change of k or chunk size is a normal reason to
+     * re-save a baseline, not a reason to fail a build.
+     *
+     * The model is left out because it has its own, stricter warning above.
+     */
+    private function renderConfigDifferences(EvalReport $report, EvalReport $baseline): void
+    {
+        if ($baseline->config === []) {
+            $this->components->warn('Baseline predates config recording; settings were not compared.');
+
+            return;
+        }
+
+        $differing = [];
+
+        foreach ($report->config as $key => $value) {
+            if ($key === 'embedding_model') {
+                continue;
+            }
+
+            if (! array_key_exists($key, $baseline->config) || $baseline->config[$key] != $value) {
+                $differing[] = $key;
+            }
+        }
+
+        if ($differing !== []) {
+            $this->components->warn('Baseline was run with different settings: '.implode(', ', $differing).'.');
+        }
     }
 
     /**

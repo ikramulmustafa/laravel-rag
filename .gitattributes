@@ -4,10 +4,13 @@
 /.gitattributes     export-ignore
 /.gitignore         export-ignore
 /phpstan.neon       export-ignore
+/phpunit.xml        export-ignore
+/.editorconfig      export-ignore
 /pint.json          export-ignore
 /CONTRIBUTING.md    export-ignore
 /CHANGELOG.md       export-ignore
 /SECURITY.md        export-ignore
+/docs               export-ignore
 
 # Normalise line endings so a checkout on Windows does not reformat the tree.
 * text=auto eol=lf

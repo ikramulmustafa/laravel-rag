@@ -17,8 +17,8 @@ final class Vector
      * pgvector expects `[0.1,-0.25,0]`.
      *
      * sprintf with %.8F rather than %g or string casting, because PHP renders small
-     * floats in scientific notation ("1.234E-8") and Postgres rejects that literal.
-     * The trailing-zero trim keeps the payload small on large corpora.
+     * floats in scientific notation ("1.234E-8"); fixed-point keeps the literal plain
+     * decimal. The trailing-zero trim keeps the payload small on large corpora.
      *
      * @param  list<float>  $vector
      */

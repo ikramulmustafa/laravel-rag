@@ -17,6 +17,12 @@
         </testsuite>
     </testsuites>
 
+    <groups>
+        <exclude>
+            <group>pgsql</group>
+        </exclude>
+    </groups>
+
     <source>
         <include>
             <directory>src</directory>

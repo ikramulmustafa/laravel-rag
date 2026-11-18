@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: Package version
-      placeholder: v0.1.0
+      placeholder: v0.3.0
     validations:
       required: true
 
@@ -22,7 +22,7 @@ body:
     id: embedder
     attributes:
       label: Embedding driver, model and dimensions
-      placeholder: openai, text-embedding-3-small, 1536
+      placeholder: sdk (openai), text-embedding-3-small, 1536
     validations:
       required: true
 

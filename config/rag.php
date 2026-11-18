@@ -20,21 +20,40 @@ return [
     |--------------------------------------------------------------------------
     | Embedding
     |--------------------------------------------------------------------------
-    | `dimensions` must match the model. It is written into the pgvector column
-    | at migration time, so changing it later requires a migration and a reindex,
-    | not just a config edit.
+    | Embeddings go through the Laravel AI SDK. Credentials and endpoints live
+    | in config/ai.php; `provider` names one of its providers, and null means
+    | `ai.default_for_embeddings`. It must be a single name: an SDK failover
+    | list would store another model's vectors under this model's id.
+    |
+    | `model` null means the provider's default embeddings model.
+    |
+    | `dimensions` must match the model. Every returned vector is checked against
+    | it, and it is written into the pgvector column at migration time, so
+    | changing it later requires a migration and a reindex, not just a config
+    | edit. `send_dimensions` asks the provider for that width; turn it off
+    | ("native" mode) for models that reject a dimensions parameter, such as
+    | Ollama models and many OpenAI-compatible servers. The width is still
+    | checked.
     |
     | The `fake` driver is deterministic and network-free. It exists so the test
     | suite can assert real retrieval ordering without an API key.
     */
 
     'embedding' => [
-        'driver' => env('RAG_EMBEDDING_DRIVER', 'openai'),
-        'model' => env('RAG_EMBEDDING_MODEL', 'text-embedding-3-small'),
+        'driver' => env('RAG_EMBEDDING_DRIVER', 'sdk'),
+        'provider' => env('RAG_EMBEDDING_PROVIDER'),
+        'model' => env('RAG_EMBEDDING_MODEL'),
         'dimensions' => (int) env('RAG_EMBEDDING_DIMENSIONS', 1536),
-        'api_key' => env('OPENAI_API_KEY'),
-        'base_url' => env('RAG_EMBEDDING_BASE_URL', 'https://api.openai.com/v1'),
+        'send_dimensions' => (bool) env('RAG_EMBEDDING_SEND_DIMENSIONS', true),
         'batch_size' => (int) env('RAG_EMBEDDING_BATCH_SIZE', 96),
+        'timeout' => (int) env('RAG_EMBEDDING_TIMEOUT', 30),
+        'cache' => (bool) env('RAG_EMBEDDING_CACHE', false),
+
+        // Deprecated, and not used to send anything. It exists only so the
+        // package can refuse a custom endpoint left over from 0.2, instead of
+        // quietly sending that endpoint's documents and token to OpenAI. Move
+        // to an "openai-compatible" provider in config/ai.php, then remove this.
+        'base_url' => env('RAG_EMBEDDING_BASE_URL'),
     ],
 
     /*
@@ -70,6 +89,21 @@ return [
     'retrieval' => [
         'default_limit' => (int) env('RAG_RETRIEVAL_LIMIT', 5),
         'min_score' => (float) env('RAG_RETRIEVAL_MIN_SCORE', 0.0),
+
+        // Optional second pass: fetch `limit * candidates` by vector similarity, then
+        // let a reranking model (through the SDK) pick the best `limit`. `provider` null
+        // means `ai.default_for_reranking`; it must be a single name, not a failover
+        // list, so scores stay comparable across a run. If the reranker fails, the
+        // vector order is returned and a warning is logged; `timeout` (seconds) keeps
+        // a hung reranker from holding every search. Empty provider or model values
+        // count as unset. Off by default: it adds one provider call per search.
+        'rerank' => [
+            'enabled' => (bool) env('RAG_RERANK', false),
+            'provider' => env('RAG_RERANK_PROVIDER'),
+            'model' => env('RAG_RERANK_MODEL'),
+            'candidates' => (int) env('RAG_RERANK_CANDIDATES', 3),
+            'timeout' => in_array(env('RAG_RERANK_TIMEOUT'), [null, ''], true) ? 10 : (int) env('RAG_RERANK_TIMEOUT'),
+        ],
     ],
 
     /*
@@ -89,7 +123,11 @@ return [
     | Evaluation
     |--------------------------------------------------------------------------
     | Thresholds are enforced by `rag:eval --ci`, which exits non-zero when any
-    | metric falls below its floor. Wire that into CI and retrieval regressions
+    | metric falls below its floor. Each can be overridden per environment with
+    | RAG_EVAL_MIN_PASS_RATE, RAG_EVAL_MIN_RECALL_AT_K and RAG_EVAL_MIN_MRR, which
+    | is how a real embedding model gets higher floors than the hashed fake one.
+    | An empty value is ignored rather than read as 0.0, which would switch the
+    | floor off. Wire that into CI and retrieval regressions
     | fail the build instead of reaching production silently.
     |
     | `tolerances` applies only when `--baseline` names a previous run. Thresholds
@@ -103,9 +141,9 @@ return [
         'suite_path' => env('RAG_EVAL_SUITE', base_path('tests/rag/suite.json')),
         'k' => (int) env('RAG_EVAL_K', 5),
         'thresholds' => [
-            'pass_rate' => 0.90,
-            'recall_at_k' => 0.80,
-            'mrr' => 0.60,
+            'pass_rate' => in_array(env('RAG_EVAL_MIN_PASS_RATE'), [null, ''], true) ? 0.90 : (float) env('RAG_EVAL_MIN_PASS_RATE'),
+            'recall_at_k' => in_array(env('RAG_EVAL_MIN_RECALL_AT_K'), [null, ''], true) ? 0.80 : (float) env('RAG_EVAL_MIN_RECALL_AT_K'),
+            'mrr' => in_array(env('RAG_EVAL_MIN_MRR'), [null, ''], true) ? 0.60 : (float) env('RAG_EVAL_MIN_MRR'),
         ],
         'tolerances' => [
             'pass_rate' => 0.0,

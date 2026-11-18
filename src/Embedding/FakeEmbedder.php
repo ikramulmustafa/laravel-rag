@@ -47,7 +47,7 @@ final class FakeEmbedder implements Embedder
 
     public function modelId(): string
     {
-        return 'fake:deterministic-hash';
+        return 'fake:deterministic-hash:'.$this->dimensions;
     }
 
     public function dimensions(): int

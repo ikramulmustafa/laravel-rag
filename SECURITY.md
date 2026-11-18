@@ -7,7 +7,7 @@ only.
 
 | Version | Supported |
 |---|---|
-| 0.1.x | yes |
+| 0.3.x | yes |
 
 ## Reporting a vulnerability
 
@@ -39,10 +39,18 @@ instructed to do with it.
 later. Treat an ingestion path that accepts user-supplied documents as an indirect
 prompt-injection surface, and do not ingest secrets you would not want quoted back.
 
-**Embedding calls leave your infrastructure.** With the OpenAI driver, chunk text
-is sent to the configured `base_url`. Whether that is acceptable is a decision
-about your data, not about this package.
+**Embedding calls leave your infrastructure.** Chunk text and queries are sent to
+the provider named by `rag.embedding.provider` (or `ai.default_for_embeddings` when that is unset; with the deprecated `openai` driver, an unset provider means `openai`), at the endpoint set for it in
+`config/ai.php` (a local Ollama server keeps them on your machine). Reranking, if
+enabled, sends retrieved passages to its provider too. Whether that is acceptable
+is a decision about your data, not about this package.
 
-**The API key comes from config.** Keep `OPENAI_API_KEY` in the environment. Note
+**Agent tool output is untrusted.** `Rag::tool()` hands retrieved passages to a
+model. They are document content, and a document can contain text that tries to
+instruct the model. The tool's description says passages are reference material,
+not instructions, but treat what the model does with them as you would any
+untrusted input.
+
+**The API key comes from config.** Provider keys live in `config/ai.php`; keep them (for example `OPENAI_API_KEY`) in the environment. Note
 that `rag:eval --json` and a saved baseline contain retrieved chunk text and
 queries, so treat those files as you would the corpus itself.

@@ -1,0 +1,106 @@
+name: Eval (real model)
+
+# Weekly retrieval eval with a real embedding model, for free: Ollama runs in the
+# runner and serves nomic-embed-text. The per-push eval in ci.yml uses the hashed
+# fake embedder, which proves the plumbing but not semantic retrieval.
+#
+# The pull_request trigger is filtered to this file and to the code a real model
+# goes through (the embedding and retrieval paths, and the dependency set), so a
+# change there is checked before merge rather than by the next weekly run.
+# GitHub only dispatches a workflow that exists on the default branch, so a new
+# workflow cannot be run by hand from a feature branch until it is merged.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/eval-real.yml'
+      - 'src/Embedding/**'
+      - 'src/Retrieval/**'
+      - 'composer.json'
+
+permissions:
+  contents: read
+
+jobs:
+  eval-real:
+    runs-on: ubuntu-latest
+    name: Retrieval eval (Ollama, nomic-embed-text)
+    timeout-minutes: 30
+
+    env:
+      # Credentials and endpoints live in config/ai.php. The ollama provider reads
+      # OLLAMA_URL (default http://localhost:11434) and needs no key.
+      RAG_EMBEDDING_DRIVER: sdk
+      RAG_EMBEDDING_PROVIDER: ollama
+      RAG_EMBEDDING_MODEL: nomic-embed-text
+      RAG_EMBEDDING_DIMENSIONS: 768
+      # Native mode: Ollama models take no dimensions parameter.
+      RAG_EMBEDDING_SEND_DIMENSIONS: false
+      # Same chunking as the fake-embedder eval (200/40), so the two are comparable.
+      RAG_CHUNK_SIZE: 200
+      RAG_CHUNK_OVERLAP: 40
+      # Floors: the first run (2026-11-19, ollama:nomic-embed-text:768) scored 1.0 on
+      # all three, so each floor is that minus 0.05.
+      RAG_EVAL_MIN_PASS_RATE: 0.95
+      RAG_EVAL_MIN_RECALL_AT_K: 0.95
+      RAG_EVAL_MIN_MRR: 0.95
+      DB_CONNECTION: sqlite
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama
+        run: |
+          # The install script registers Ollama as a service and may already have
+          # started it, so only start a second server if nothing is answering.
+          if ! curl -fsS http://127.0.0.1:11434 > /dev/null 2>&1; then
+            nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          fi
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434 > /dev/null 2>&1; then
+              echo "ollama is up after ${i} checks"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ollama did not answer on 127.0.0.1:11434 within 120 seconds" >&2
+          cat "$RUNNER_TEMP/ollama.log" >&2 || true
+          journalctl -u ollama --no-pager -n 50 >&2 || true
+          exit 1
+
+      - run: ollama pull nomic-embed-text
+
+      # A file database, so the run does not depend on pgvector or a column width.
+      - name: Migrate and ingest the fixture corpus
+        env:
+          DB_DATABASE: ${{ runner.temp }}/rag.sqlite
+        run: |
+          touch "$DB_DATABASE"
+          vendor/bin/testbench migrate --force
+          vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
+
+      # --json keeps the metrics in the log; --ci fails the job below the floors.
+      - name: Evaluate retrieval with the real model
+        env:
+          DB_DATABASE: ${{ runner.temp }}/rag.sqlite
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --ci --json --save="$RUNNER_TEMP/eval.json"
+
+      # The fixture suite also passes with the hashed fake embedder at k=2, so a
+      # run that quietly fell back to it would look like a pass. Check the report
+      # names the real model.
+      - name: Check the eval ran on nomic-embed-text
+        run: |
+          php -r '$r = json_decode((string) file_get_contents(getenv("RUNNER_TEMP")."/eval.json"), true); $m = $r["embedding_model"] ?? null; if ($m !== "ollama:nomic-embed-text:768") { fwrite(STDERR, "eval ran on the wrong embedding model: ".var_export($m, true).PHP_EOL); exit(1); } echo "embedding model: ", $m, PHP_EOL;'

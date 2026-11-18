@@ -1,0 +1,219 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Ikram\Rag\Embedding;
+
+use Closure;
+use Ikram\Rag\Contracts\Embedder;
+use Illuminate\Contracts\Container\Container;
+use InvalidArgumentException;
+use Laravel\Ai\Enums\Lab;
+use UnexpectedValueException;
+
+/**
+ * Maps `rag.embedding.driver` to an Embedder. Built in: `sdk` (the Laravel AI
+ * SDK), `fake` (deterministic, network-free) and `openai`, a deprecated alias
+ * kept because a published 0.2 config still says `driver => 'openai'` and
+ * `mergeConfigFrom` is shallow, so those apps would otherwise fail to boot on
+ * upgrade. The alias goes in 1.0.
+ *
+ * Both SDK-backed drivers refuse a 0.2 `base_url` that pointed somewhere other
+ * than OpenAI: 0.3 can't honour it, and carrying on would send the documents,
+ * with the token that was meant for that endpoint, to the SDK provider instead.
+ * Custom drivers and `fake` never send anything there, so they are not checked.
+ *
+ * A container singleton, so the warnings are tracked per application instance
+ * rather than in static state: each app warns once, and the next test's fresh
+ * app warns again.
+ */
+final class EmbedderRegistry
+{
+    private const OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+    /** @var array<string, Closure> */
+    private array $factories = [];
+
+    /** @var array<string, true> */
+    private array $warned = [];
+
+    public function __construct(private readonly Container $container)
+    {
+        $this->factories['sdk'] = fn (): Embedder => $this->sdk($this->refuseConfigPredating03($this->config()));
+        $this->factories['fake'] = fn (): Embedder => new FakeEmbedder((int) config('rag.embedding.dimensions', 1536));
+        $this->factories['openai'] = fn (): Embedder => $this->openAiAlias();
+    }
+
+    /**
+     * Register a driver. The factory receives the container and must return an
+     * Embedder; registering an existing name replaces it.
+     *
+     * The Embedder is a singleton, so call this from a service provider's
+     * register() or boot(), before anything resolves the embedder. A driver
+     * registered afterwards is not picked up by the instance already built.
+     */
+    public function extend(string $driver, Closure $factory): void
+    {
+        $this->factories[$driver] = $factory;
+    }
+
+    public function make(string $driver): Embedder
+    {
+        $factory = $this->factories[$driver] ?? throw new InvalidArgumentException(sprintf(
+            'Unknown embedding driver [%s]. Registered: %s.',
+            $driver,
+            implode(', ', $this->drivers()),
+        ));
+
+        $this->warnIfConfigPredates03();
+
+        $embedder = $factory($this->container);
+
+        if (! $embedder instanceof Embedder) {
+            throw new UnexpectedValueException(sprintf(
+                'The factory for embedding driver [%s] returned %s, not an %s.',
+                $driver,
+                get_debug_type($embedder),
+                Embedder::class,
+            ));
+        }
+
+        return $embedder;
+    }
+
+    /** @return list<string> */
+    public function drivers(): array
+    {
+        return array_keys($this->factories);
+    }
+
+    private function openAiAlias(): Embedder
+    {
+        $config = $this->config();
+
+        $this->refuseCustomEndpoint($config);
+
+        $this->warnOnce('openai-driver', '[laravel-rag] The "openai" embedding driver is deprecated; use "sdk" with RAG_EMBEDDING_PROVIDER=openai.');
+
+        $provider = $config['provider'] ?? null;
+
+        return $this->sdk([...$config, 'provider' => $provider === null || $provider === '' ? 'openai' : $provider]);
+    }
+
+    /**
+     * 0.2 read the endpoint from `base_url`; now only config/ai.php does. A
+     * custom one, whether from a published 0.2 config or RAG_EMBEDDING_BASE_URL
+     * alone, means the documents and the token in OPENAI_API_KEY were meant for
+     * another server, so refuse before anything is built or sent.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    private function refuseCustomEndpoint(array $config): void
+    {
+        $baseUrl = $config['base_url'] ?? null;
+
+        if (! is_string($baseUrl) || $baseUrl === '' || rtrim($baseUrl, '/') === self::OPENAI_BASE_URL) {
+            return;
+        }
+
+        $host = parse_url($baseUrl, PHP_URL_HOST);
+
+        throw new InvalidArgumentException(sprintf(
+            'rag.embedding.base_url (RAG_EMBEDDING_BASE_URL) points at %s, but 0.3 no longer reads it, so embedding '
+            .'would send your documents to the SDK provider (api.openai.com for "openai") instead. '
+            .'Set RAG_EMBEDDING_DRIVER=sdk, define an "openai-compatible" provider with that url in config/ai.php, '
+            .'set RAG_EMBEDDING_PROVIDER to its name, remove base_url / RAG_EMBEDDING_BASE_URL, '
+            .'then run `php artisan rag:reindex --stale`.',
+            is_string($host) && $host !== '' ? "[{$host}]" : 'a custom endpoint',
+        ));
+    }
+
+    /**
+     * `sdk` did not exist in 0.2, so an `embedding` block that selects it but has
+     * no `provider` key is a migration left half done: the env vars 0.3 added,
+     * RAG_EMBEDDING_PROVIDER first, have no key to land in, and the provider
+     * would quietly become `ai.default_for_embeddings`. For an app moving off a
+     * private endpoint that means its documents going to OpenAI, so refuse. The
+     * `openai` alias is not checked: a stock 0.2 config must keep booting.
+     *
+     * The custom-endpoint check runs first, so that case keeps its own message.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<string, mixed>
+     */
+    private function refuseConfigPredating03(array $config): array
+    {
+        $this->refuseCustomEndpoint($config);
+
+        if (! array_key_exists('provider', $config)) {
+            throw new InvalidArgumentException(
+                'rag.embedding has no "provider" key: your published config/rag.php predates 0.3, so '
+                .'RAG_EMBEDDING_PROVIDER, RAG_EMBEDDING_SEND_DIMENSIONS, RAG_EMBEDDING_TIMEOUT and RAG_EMBEDDING_CACHE '
+                .'are ignored and the "sdk" driver would fall back to ai.default_for_embeddings. Re-publish it with '
+                .'`php artisan vendor:publish --tag=rag-config --force` (or add the 0.3 keys), then retry.'
+            );
+        }
+
+        return $config;
+    }
+
+    /**
+     * Hand `ai.default_for_embeddings` over as a name. The SDK also accepts a Lab
+     * enum there, and a failover list, which goes in as the provider so that
+     * SdkEmbedder rejects it with the reason rather than "nothing configured".
+     *
+     * @param  array<string, mixed>  $config
+     */
+    private function sdk(array $config): Embedder
+    {
+        $this->refuseCustomEndpoint($config);
+
+        $default = config('ai.default_for_embeddings');
+
+        if ($default instanceof Lab) {
+            $default = $default->value;
+        }
+
+        if (is_array($default)) {
+            $config['provider'] ??= $default;
+        }
+
+        return SdkEmbedder::fromConfig($config, is_string($default) ? $default : null);
+    }
+
+    /** @return array<string, mixed> */
+    private function config(): array
+    {
+        $config = config('rag.embedding', []);
+
+        return is_array($config) ? $config : [];
+    }
+
+    /**
+     * `mergeConfigFrom` is shallow, so a published 0.2 config/rag.php replaces
+     * the whole `embedding` block, and with it every key 0.3 added. Their env
+     * vars then do nothing, silently. `provider` is the tell: 0.2 never had it.
+     */
+    private function warnIfConfigPredates03(): void
+    {
+        if (array_key_exists('provider', $this->config())) {
+            return;
+        }
+
+        $this->warnOnce('predates-0.3', '[laravel-rag] Your published config/rag.php predates 0.3: the new keys '
+            .'(embedding provider, send_dimensions, timeout, cache, retrieval.rerank, the eval threshold env vars) '
+            .'are missing, so their env vars are ignored. Re-publish it with '
+            .'`php artisan vendor:publish --tag=rag-config --force`, or copy the new keys in.');
+    }
+
+    private function warnOnce(string $key, string $message): void
+    {
+        if (isset($this->warned[$key])) {
+            return;
+        }
+
+        $this->warned[$key] = true;
+
+        logger()->warning($message);
+    }
+}

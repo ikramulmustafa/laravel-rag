@@ -38,7 +38,7 @@ final class IngestCommand extends Command
         }
 
         if (! $this->option('force')) {
-            $ingestor->confirmWith(function (int $tokens, int $chunks): bool {
+            $ingestor = $ingestor->confirmWith(function (int $tokens, int $chunks): bool {
                 $this->newLine();
                 $this->components->warn(sprintf(
                     'About to embed %s chunks, roughly %s tokens.',
