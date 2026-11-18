@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ikram\Rag\Storage\PgvectorColumn;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
@@ -61,11 +62,15 @@ return new class extends Migration
             DB::connection($this->getConnection())->statement("ALTER TABLE rag_chunks ADD COLUMN embedding vector({$dimensions})");
 
             // HNSW over cosine distance. Built after the column exists so the
-            // dimensionality is already fixed.
-            DB::connection($this->getConnection())->statement(
-                'CREATE INDEX rag_chunks_embedding_idx ON rag_chunks '
-                .'USING hnsw (embedding vector_cosine_ops)'
-            );
+            // dimensionality is already fixed. pgvector refuses an HNSW index on a
+            // column wider than 2000, so a wider one (3-large at 3072) is left
+            // unindexed and searched by a full scan rather than failing the migrate.
+            if ($dimensions <= PgvectorColumn::MAX_INDEXED_DIMENSIONS) {
+                DB::connection($this->getConnection())->statement(
+                    'CREATE INDEX rag_chunks_embedding_idx ON rag_chunks '
+                    .'USING hnsw (embedding vector_cosine_ops)'
+                );
+            }
         } else {
             // SQLite and MySQL have no native vector type. Storing JSON keeps the
             // test suite runnable everywhere; the retriever falls back to in-PHP

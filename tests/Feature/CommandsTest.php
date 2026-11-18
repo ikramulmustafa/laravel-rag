@@ -295,3 +295,35 @@ it('reports every failed document even when two collections share a source', fun
         ->expectsOutputToContain('b/docs/refunds.md')
         ->assertFailed();
 });
+
+it('runs --resize as --stale where the vector width is not fixed', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('db:fresh', 'Shipping takes three to five working days.');
+    $ingestor->ingest('db:stale', 'Refunds are available within 30 days of delivery.');
+
+    $stale = Document::where('source', 'db:stale')->firstOrFail();
+    Chunk::where('document_id', $stale->id)->update(['embedding_model' => 'old:model']);
+
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
+        ->expectsOutputToContain('Vector width is not fixed on this database; running --stale.')
+        ->assertSuccessful();
+
+    expect($spy->calls)->toBe(1)
+        ->and($stale->chunks()->pluck('embedding_model')->unique()->all())->toBe(['fake:deterministic-hash:64']);
+});
+
+it('refuses --resize with --collection before changing anything', function (): void {
+    app(Ingestor::class)->ingest('db:1', 'Refunds are available within 30 days of delivery.', collection: 'a');
+    Chunk::query()->update(['embedding_model' => 'old:model']);
+
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--collection' => 'a', '--force' => true])
+        ->expectsOutputToContain('--collection')
+        ->assertFailed();
+
+    expect($spy->calls)->toBe(0)
+        ->and(Chunk::query()->pluck('embedding_model')->unique()->all())->toBe(['old:model']);
+});

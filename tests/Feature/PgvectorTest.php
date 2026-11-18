@@ -3,9 +3,12 @@
 declare(strict_types=1);
 
 use Ikram\Rag\Contracts\Retriever;
+use Ikram\Rag\Documents\Chunk;
 use Ikram\Rag\Documents\Ingestor;
+use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Exceptions\MixedEmbeddingModels;
 use Ikram\Rag\Facades\Rag;
+use Ikram\Rag\Storage\PgvectorColumn;
 use Illuminate\Support\Facades\DB;
 
 /*
@@ -59,4 +62,90 @@ it('scopes the guard per collection on pgsql', function (): void {
 
     expect(Rag::retrieve('refund', 10, ['collection' => 'a'])->sources())->toBe(['a/refunds.md'])
         ->and(fn () => Rag::retrieve('refund'))->toThrow(MixedEmbeddingModels::class, 'other:model:64');
+})->group('pgsql');
+
+/** Whether the HNSW index on rag_chunks.embedding exists. */
+function hasEmbeddingIndex(): bool
+{
+    return (int) DB::scalar(
+        "SELECT count(*) FROM pg_indexes WHERE tablename = 'rag_chunks' AND indexname = 'rag_chunks_embedding_idx'"
+    ) === 1;
+}
+
+/** Point the package at a new width, as a user would by changing RAG_EMBEDDING_DIMENSIONS. */
+function switchToWidth(int $dimensions): void
+{
+    config(['rag.embedding.dimensions' => $dimensions]);
+    useEmbedder(new FakeEmbedder($dimensions));
+}
+
+it('resizes the vector column and reindexes', function (): void {
+    $this->artisan('rag:ingest', ['path' => __DIR__.'/../Fixtures/corpus', '--force' => true])->assertSuccessful();
+
+    expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(64)
+        ->and(hasEmbeddingIndex())->toBeTrue();
+
+    switchToWidth(32);
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])->assertSuccessful();
+
+    expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(32)
+        ->and(hasEmbeddingIndex())->toBeTrue()
+        ->and(Chunk::query()->whereNull('embedding')->count())->toBe(0)
+        ->and(Chunk::query()->pluck('embedding_model')->unique()->all())->toBe(['fake:deterministic-hash:32'])
+        ->and(Rag::retrieve('refund for damaged goods', 3)->isEmpty())->toBeFalse();
+})->group('pgsql');
+
+it('leaves wide columns unindexed', function (): void {
+    switchToWidth(2001);
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
+        ->expectsOutputToContain('unindexed')
+        ->assertSuccessful();
+
+    expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(2001)
+        ->and(hasEmbeddingIndex())->toBeFalse()
+        ->and(Chunk::query()->whereNull('embedding')->count())->toBe(0)
+        ->and(PgvectorColumn::resize(DB::connection(), 2001))->toBeFalse()
+        ->and(hasEmbeddingIndex())->toBeFalse();
+})->group('pgsql');
+
+it('asks before resizing and changes nothing when declined', function (): void {
+    switchToWidth(32);
+
+    $this->artisan('rag:reindex', ['--resize' => true])
+        ->expectsConfirmation(
+            'Resize the vector column from 64 to 32 dimensions? This clears every stored vector: '
+            .'search returns no results for the 3 document(s) until re-embedding finishes.',
+            'no',
+        )
+        ->assertFailed();
+
+    expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(64)
+        ->and(hasEmbeddingIndex())->toBeTrue()
+        ->and(Chunk::query()->whereNull('embedding')->count())->toBe(0);
+})->group('pgsql');
+
+it('runs a normal --stale reindex when the width already matches', function (): void {
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
+        ->expectsOutputToContain('already 64 dimensions wide')
+        ->expectsOutputToContain('No stale documents')
+        ->assertSuccessful();
+
+    expect($spy->calls)->toBe(0)
+        ->and(hasEmbeddingIndex())->toBeTrue();
+})->group('pgsql');
+
+it('migrates a column wider than 2000 without an index', function (): void {
+    $migrations = ['--path' => realpath(__DIR__.'/../../database/migrations'), '--realpath' => true];
+
+    config(['rag.embedding.dimensions' => 2001]);
+
+    $this->artisan('migrate:rollback', $migrations)->assertSuccessful();
+    $this->artisan('migrate', $migrations)->assertSuccessful();
+
+    expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(2001)
+        ->and(hasEmbeddingIndex())->toBeFalse();
 })->group('pgsql');

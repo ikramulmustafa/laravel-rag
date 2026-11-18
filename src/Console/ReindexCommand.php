@@ -8,6 +8,7 @@ use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Documents\Document;
 use Ikram\Rag\Documents\Ingestor;
 use Ikram\Rag\Embedding\EmbeddingModelId;
+use Ikram\Rag\Storage\PgvectorColumn;
 use Illuminate\Console\Command;
 use RuntimeException;
 use Throwable;
@@ -22,12 +23,16 @@ use Throwable;
  * Text comes from the stored copy first, so content that was ingested from a
  * database row (no file behind it) reindexes like any other. The file at `source`
  * is only the fallback for rows ingested before 0.3 stored the text.
+ *
+ * On pgvector a change of width also needs the column changed, since `vector(N)`
+ * takes nothing else: `--resize` does that first, then reindexes as `--stale`.
  */
 final class ReindexCommand extends Command
 {
     protected $signature = 'rag:reindex
         {--collection= : Limit to one collection}
         {--stale : Only documents with a chunk from another embedding model, or without an embedding}
+        {--resize : On pgvector, change the vector column to the configured width first, then reindex as --stale}
         {--force : Skip confirmation}';
 
     protected $description = 'Re-embed stored documents with the current embedding model';
@@ -35,10 +40,25 @@ final class ReindexCommand extends Command
     public function handle(Ingestor $ingestor, Embedder $embedder): int
     {
         $current = $embedder->modelId();
+        $staleOnly = (bool) $this->option('stale');
+        $confirmed = (bool) $this->option('force');
+
+        if ($this->option('resize')) {
+            $outcome = $this->resize($embedder);
+
+            if ($outcome === 'stop') {
+                return self::FAILURE;
+            }
+
+            // After a resize every vector is NULL, so --stale selects the whole
+            // corpus, and a run that fails part-way resumes where it stopped.
+            $staleOnly = true;
+            $confirmed = $confirmed || $outcome === 'resized';
+        }
 
         $query = Document::query()
             ->when($this->option('collection'), fn ($q, $c) => $q->where('collection', $c))
-            ->when($this->option('stale'), fn ($q) => $q->whereHas(
+            ->when($staleOnly, fn ($q) => $q->whereHas(
                 'chunks',
                 // Grouped so the OR cannot escape the document_id constraint.
                 fn ($chunks) => $chunks->where(fn ($stale) => $stale
@@ -49,7 +69,7 @@ final class ReindexCommand extends Command
         $total = (clone $query)->count();
 
         if ($total === 0) {
-            $this->components->warn($this->option('stale') ? 'No stale documents to reindex.' : 'No documents to reindex.');
+            $this->components->warn($staleOnly ? 'No stale documents to reindex.' : 'No documents to reindex.');
 
             return self::SUCCESS;
         }
@@ -60,7 +80,7 @@ final class ReindexCommand extends Command
             $current,
         ));
 
-        if (! $this->option('force') && ! $this->confirm('Continue?', default: false)) {
+        if (! $confirmed && ! $this->confirm('Continue?', default: false)) {
             return self::FAILURE;
         }
 
@@ -120,5 +140,64 @@ final class ReindexCommand extends Command
         $this->components->info('Reindex complete.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Bring the pgvector column to the embedder's width before reindexing.
+     *
+     * The target is the embedder's width rather than the raw config value: it is
+     * the same for the built-in drivers, and it is what every new vector will be,
+     * so the column can never be resized to a width the ingest then rejects.
+     *
+     * @return 'stop'|'unchanged'|'resized' stop: refused or declined, nothing changed
+     */
+    private function resize(Embedder $embedder): string
+    {
+        // The column is shared by every collection, and resizing it clears all of
+        // their vectors, so reindexing only one would leave the rest unsearchable.
+        if ($this->option('collection')) {
+            $this->components->error('--resize changes the vector column for every collection, so it cannot be combined with --collection.');
+
+            return 'stop';
+        }
+
+        $connection = (new Document)->getConnection();
+
+        if ($connection->getDriverName() !== 'pgsql') {
+            $this->components->info('Vector width is not fixed on this database; running --stale.');
+
+            return 'unchanged';
+        }
+
+        $target = $embedder->dimensions();
+        $width = PgvectorColumn::currentWidth($connection);
+
+        if ($width === $target) {
+            $this->components->info("The vector column is already {$target} dimensions wide; running --stale.");
+
+            return 'unchanged';
+        }
+
+        $change = sprintf('the vector column%s to %d dimensions', $width === null ? '' : " from {$width}", $target);
+        $impact = sprintf(
+            'This clears every stored vector: search returns no results for the %d document(s) until re-embedding finishes.',
+            Document::query()->count(),
+        );
+
+        if ($this->option('force')) {
+            $this->components->warn("Resizing {$change}. {$impact}");
+        } elseif (! $this->confirm("Resize {$change}? {$impact}", default: false)) {
+            return 'stop';
+        }
+
+        if (! PgvectorColumn::resize($connection, $target)) {
+            $this->components->warn(sprintf(
+                'pgvector cannot index more than %d dimensions, so the column is left unindexed and every search scans it in full. '
+                .'A smaller RAG_EMBEDDING_DIMENSIONS keeps the index, e.g. text-embedding-3-large at 1536.',
+                PgvectorColumn::MAX_INDEXED_DIMENSIONS,
+            ));
+        }
+
+        return 'resized';
     }
 }
