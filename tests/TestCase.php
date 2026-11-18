@@ -10,6 +10,16 @@ use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
+    /**
+     * Config a test file wants in place before the application boots and the
+     * package migrations run. Set from beforeAll(), which runs ahead of setUp();
+     * a beforeEach() would be too late, the tables would already exist on the
+     * default connection.
+     *
+     * @var array<string, mixed>
+     */
+    public static array $bootConfig = [];
+
     protected function getPackageProviders($app): array
     {
         return [AiServiceProvider::class, RagServiceProvider::class];
@@ -34,6 +44,10 @@ abstract class TestCase extends Orchestra
         $app['config']->set('rag.embedding.dimensions', 64);
         $app['config']->set('rag.chunking.size', 200);
         $app['config']->set('rag.chunking.overlap', 40);
+
+        foreach (self::$bootConfig as $key => $value) {
+            $app['config']->set($key, $value);
+        }
     }
 
     protected function defineDatabaseMigrations(): void

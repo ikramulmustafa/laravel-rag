@@ -9,16 +9,25 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    /**
+     * Run on rag.connection so the tables land beside the models and the
+     * retriever, not on whatever the application's default happens to be.
+     */
+    public function getConnection(): ?string
+    {
+        return config('rag.connection');
+    }
+
     public function up(): void
     {
         $dimensions = (int) config('rag.embedding.dimensions', 1536);
-        $driver = Schema::getConnection()->getDriverName();
+        $driver = Schema::connection($this->getConnection())->getConnection()->getDriverName();
 
         if ($driver === 'pgsql') {
-            DB::statement('CREATE EXTENSION IF NOT EXISTS vector');
+            DB::connection($this->getConnection())->statement('CREATE EXTENSION IF NOT EXISTS vector');
         }
 
-        Schema::create('rag_documents', function (Blueprint $table): void {
+        Schema::connection($this->getConnection())->create('rag_documents', function (Blueprint $table): void {
             $table->id();
             $table->string('source')->comment('URI, file path, or opaque identifier for the origin');
             $table->string('collection')->default('default');
@@ -30,7 +39,7 @@ return new class extends Migration
             $table->index('content_hash');
         });
 
-        Schema::create('rag_chunks', function (Blueprint $table): void {
+        Schema::connection($this->getConnection())->create('rag_chunks', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('document_id')->constrained('rag_documents')->cascadeOnDelete();
             $table->text('text');
@@ -49,11 +58,11 @@ return new class extends Migration
         });
 
         if ($driver === 'pgsql') {
-            DB::statement("ALTER TABLE rag_chunks ADD COLUMN embedding vector({$dimensions})");
+            DB::connection($this->getConnection())->statement("ALTER TABLE rag_chunks ADD COLUMN embedding vector({$dimensions})");
 
             // HNSW over cosine distance. Built after the column exists so the
             // dimensionality is already fixed.
-            DB::statement(
+            DB::connection($this->getConnection())->statement(
                 'CREATE INDEX rag_chunks_embedding_idx ON rag_chunks '
                 .'USING hnsw (embedding vector_cosine_ops)'
             );
@@ -61,12 +70,12 @@ return new class extends Migration
             // SQLite and MySQL have no native vector type. Storing JSON keeps the
             // test suite runnable everywhere; the retriever falls back to in-PHP
             // cosine similarity, which is correct but only viable on small corpora.
-            Schema::table('rag_chunks', function (Blueprint $table): void {
+            Schema::connection($this->getConnection())->table('rag_chunks', function (Blueprint $table): void {
                 $table->json('embedding')->nullable();
             });
         }
 
-        Schema::create('rag_eval_runs', function (Blueprint $table): void {
+        Schema::connection($this->getConnection())->create('rag_eval_runs', function (Blueprint $table): void {
             $table->id();
             $table->string('suite');
             $table->string('embedding_model', 128);
@@ -82,8 +91,8 @@ return new class extends Migration
 
     public function down(): void
     {
-        Schema::dropIfExists('rag_eval_runs');
-        Schema::dropIfExists('rag_chunks');
-        Schema::dropIfExists('rag_documents');
+        Schema::connection($this->getConnection())->dropIfExists('rag_eval_runs');
+        Schema::connection($this->getConnection())->dropIfExists('rag_chunks');
+        Schema::connection($this->getConnection())->dropIfExists('rag_documents');
     }
 };
