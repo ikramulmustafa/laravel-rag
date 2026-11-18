@@ -273,3 +273,16 @@ it('does not take a stored full id for a legacy one in the mixed-model guard', f
 
     expect(fn () => Rag::retrieve('refund'))->toThrow(MixedEmbeddingModels::class, 'drv:foo:768');
 });
+
+it('ignores chunks without an embedding in the mixed-model guard', function (): void {
+    // What a resize leaves behind until the reindex reaches a document: the
+    // vector is cleared, the old model id stays.
+    DB::table('rag_chunks')
+        ->whereIn('document_id', DB::table('rag_documents')->where('source', 'policies/shipping.md')->pluck('id')->all())
+        ->update(['embedding' => null, 'embedding_model' => 'fake:deterministic-hash:32']);
+
+    $sources = Rag::retrieve('refund for damaged goods', 10)->sources();
+
+    expect($sources)->toContain('policies/refunds.md')
+        ->and($sources)->not->toContain('policies/shipping.md');
+});

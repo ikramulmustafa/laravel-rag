@@ -100,7 +100,12 @@ final class VectorRetriever implements Retriever
         $current = $this->embedder->modelId();
         $accepted = EmbeddingModelId::accepted($current);
 
-        $offending = $this->scopedChunks($filters)->whereNotIn('c.embedding_model', $accepted);
+        // A chunk without a vector cannot be searched, so its id does not matter:
+        // it is a row a resize cleared and the reindex has not reached yet. Counting
+        // it would make a half-finished resize throw instead of returning less.
+        $offending = $this->scopedChunks($filters)
+            ->whereNotNull('c.embedding')
+            ->whereNotIn('c.embedding_model', $accepted);
 
         if (! $offending->exists()) {
             return;
@@ -117,7 +122,10 @@ final class VectorRetriever implements Retriever
             ->map(static fn (mixed $id): string => (string) $id)
             ->all();
 
-        $hasCurrent = $this->scopedChunks($filters)->whereIn('c.embedding_model', $accepted)->exists();
+        $hasCurrent = $this->scopedChunks($filters)
+            ->whereNotNull('c.embedding')
+            ->whereIn('c.embedding_model', $accepted)
+            ->exists();
 
         if (count($others) === 1 && ! $hasCurrent) {
             throw new MixedEmbeddingModels(sprintf(

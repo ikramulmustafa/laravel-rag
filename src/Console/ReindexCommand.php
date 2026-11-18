@@ -42,6 +42,7 @@ final class ReindexCommand extends Command
         $current = $embedder->modelId();
         $staleOnly = (bool) $this->option('stale');
         $confirmed = (bool) $this->option('force');
+        $resized = false;
 
         if ($this->option('resize')) {
             $outcome = $this->resize($embedder);
@@ -53,7 +54,8 @@ final class ReindexCommand extends Command
             // After a resize every vector is NULL, so --stale selects the whole
             // corpus, and a run that fails part-way resumes where it stopped.
             $staleOnly = true;
-            $confirmed = $confirmed || $outcome === 'resized';
+            $resized = $outcome === 'resized';
+            $confirmed = $confirmed || $resized;
         }
 
         $query = Document::query()
@@ -132,7 +134,10 @@ final class ReindexCommand extends Command
             }
 
             $this->line('');
-            $this->line('  <fg=gray>These still hold their old vectors. Fix the cause, or re-ingest them, then run again with --stale.</>');
+            // After a resize there are no old vectors to fall back on.
+            $this->line($resized
+                ? '  <fg=gray>These have no vectors and are left out of search until they are re-embedded. Fix the cause, or re-ingest them, then run rag:reindex --stale.</>'
+                : '  <fg=gray>These still hold their old vectors. Fix the cause, or re-ingest them, then run again with --stale.</>');
 
             return self::FAILURE;
         }
@@ -169,8 +174,24 @@ final class ReindexCommand extends Command
             return 'unchanged';
         }
 
+        $type = PgvectorColumn::currentType($connection);
+
+        if ($type === null) {
+            $this->components->error('There is no rag_chunks.embedding column to resize. Run php artisan migrate first.');
+
+            return 'stop';
+        }
+
+        // Resizing replaces the column, so anything other than a vector column
+        // (say one converted to halfvec by hand) would lose every value it holds.
+        if (! PgvectorColumn::isVector($type)) {
+            $this->components->error("rag_chunks.embedding is {$type}, not a pgvector vector column. --resize only changes vector columns, so nothing was changed.");
+
+            return 'stop';
+        }
+
         $target = $embedder->dimensions();
-        $width = PgvectorColumn::currentWidth($connection);
+        $width = PgvectorColumn::parseWidth($type);
 
         if ($width === $target) {
             $this->components->info("The vector column is already {$target} dimensions wide; running --stale.");

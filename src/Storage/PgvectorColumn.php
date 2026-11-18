@@ -24,6 +24,16 @@ final class PgvectorColumn
     public const MAX_INDEXED_DIMENSIONS = 2000;
 
     /**
+     * Whether a `format_type()` result is a pgvector `vector` column, sized or not.
+     * `halfvec`, `sparsevec` and arrays are not: their values are not vectors this
+     * package wrote, and resizing would wipe them.
+     */
+    public static function isVector(string $formatType): bool
+    {
+        return preg_match('/^vector(\(\d+\))?$/', trim($formatType)) === 1;
+    }
+
+    /**
      * The width in a `format_type()` result: `vector(64)` is 64. A bare `vector`
      * has no fixed width, and any other type is not a pgvector column at all.
      */
@@ -34,23 +44,37 @@ final class PgvectorColumn
             : null;
     }
 
+    /**
+     * The declared type of `rag_chunks.embedding`, e.g. `vector(64)`, or null when
+     * the table or the column does not exist. `to_regclass` rather than a
+     * `::regclass` cast, which would throw on a missing table instead.
+     */
+    public static function currentType(Connection $connection): ?string
+    {
+        $type = $connection->scalar(
+            "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = to_regclass('rag_chunks') AND attname = 'embedding' AND NOT attisdropped"
+        );
+
+        return is_string($type) ? $type : null;
+    }
+
     /** The width the column is declared with, or null when it has none. */
     public static function currentWidth(Connection $connection): ?int
     {
-        $type = $connection->scalar(
-            "SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = 'rag_chunks'::regclass AND attname = 'embedding'"
-        );
+        $type = self::currentType($connection);
 
-        return is_string($type) ? self::parseWidth($type) : null;
+        return $type === null ? null : self::parseWidth($type);
     }
 
     /**
-     * Change the column to `vector($dimensions)`, clearing every stored vector.
+     * Replace the column with a `vector($dimensions)` one, clearing every stored vector.
      *
      * One transaction, so a failure leaves the old column and its index in place.
-     * `USING NULL` because a vector cannot be cast to another width; the chunks
-     * keep their text and are re-embedded afterwards. The retriever skips NULL
-     * embeddings, so search returns fewer results meanwhile rather than errors.
+     * Dropping and re-adding the column rather than `ALTER COLUMN ... TYPE`: a type
+     * change rewrites the whole table under an exclusive lock, while a dropped
+     * column is only marked dead and the new one starts out NULL with no rewrite.
+     * The chunks keep their text and are re-embedded afterwards. The retriever
+     * skips NULL embeddings, so search returns fewer results meanwhile, not errors.
      *
      * @return bool whether the column is indexed, which it is not above
      *              MAX_INDEXED_DIMENSIONS
@@ -62,8 +86,10 @@ final class PgvectorColumn
         }
 
         return $connection->transaction(function () use ($connection, $dimensions): bool {
+            // Dropping the column would take the index with it; dropped by name so
+            // the order of events does not rest on that.
             $connection->statement('DROP INDEX IF EXISTS rag_chunks_embedding_idx');
-            $connection->statement("ALTER TABLE rag_chunks ALTER COLUMN embedding TYPE vector({$dimensions}) USING NULL");
+            $connection->statement("ALTER TABLE rag_chunks DROP COLUMN embedding, ADD COLUMN embedding vector({$dimensions})");
 
             if ($dimensions > self::MAX_INDEXED_DIMENSIONS) {
                 return false;

@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Documents\Chunk;
+use Ikram\Rag\Documents\Document;
 use Ikram\Rag\Documents\Ingestor;
 use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Exceptions\MixedEmbeddingModels;
 use Ikram\Rag\Facades\Rag;
 use Ikram\Rag\Storage\PgvectorColumn;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /*
  * The pgvector query path: the `<=>` cosine operator, the ::vector cast and the
@@ -106,6 +108,8 @@ it('leaves wide columns unindexed', function (): void {
     expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(2001)
         ->and(hasEmbeddingIndex())->toBeFalse()
         ->and(Chunk::query()->whereNull('embedding')->count())->toBe(0)
+        // An exact scan, with no index to use, still answers.
+        ->and(Rag::retrieve('refund for damaged goods', 3)->isEmpty())->toBeFalse()
         ->and(PgvectorColumn::resize(DB::connection(), 2001))->toBeFalse()
         ->and(hasEmbeddingIndex())->toBeFalse();
 })->group('pgsql');
@@ -148,4 +152,48 @@ it('migrates a column wider than 2000 without an index', function (): void {
 
     expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(2001)
         ->and(hasEmbeddingIndex())->toBeFalse();
+})->group('pgsql');
+
+it('keeps search working while a resize is only partly re-embedded', function (): void {
+    // Neither stored nor a readable file, so this one document fails to re-embed.
+    Document::where('source', 'policies/shipping.md')->update(['content' => null]);
+
+    switchToWidth(32);
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
+        ->expectsOutputToContain('1 document(s) could not be reindexed')
+        ->expectsOutputToContain('These have no vectors and are left out of search')
+        ->expectsOutputToContain('rag:reindex --stale')
+        ->assertFailed();
+
+    $sources = Rag::retrieve('refund for damaged goods', 10)->sources();
+
+    expect(PgvectorColumn::currentWidth(DB::connection()))->toBe(32)
+        ->and($sources)->toContain('policies/refunds.md')
+        ->and($sources)->not->toContain('policies/shipping.md');
+})->group('pgsql');
+
+it('refuses to resize a column that is not a vector column', function (): void {
+    DB::statement('DROP INDEX rag_chunks_embedding_idx');
+    DB::statement('ALTER TABLE rag_chunks ALTER COLUMN embedding TYPE halfvec(64) USING embedding::halfvec(64)');
+
+    switchToWidth(32);
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
+        ->expectsOutputToContain('halfvec(64)')
+        ->assertFailed();
+
+    expect(DB::scalar("SELECT format_type(atttypid, atttypmod) FROM pg_attribute WHERE attrelid = 'rag_chunks'::regclass AND attname = 'embedding'"))
+        ->toBe('halfvec(64)')
+        ->and(Chunk::query()->whereNull('embedding')->count())->toBe(0);
+})->group('pgsql');
+
+it('says to migrate when there is no chunks table to resize', function (): void {
+    Schema::drop('rag_chunks');
+
+    switchToWidth(32);
+
+    $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
+        ->expectsOutputToContain('php artisan migrate')
+        ->assertFailed();
 })->group('pgsql');

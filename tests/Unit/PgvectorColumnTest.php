@@ -21,3 +21,15 @@ it('has no width for a type that is not vector', function (): void {
 it('stops indexing at pgvector\'s hnsw limit', function (): void {
     expect(PgvectorColumn::MAX_INDEXED_DIMENSIONS)->toBe(2000);
 });
+
+it('recognises sized and unsized vector columns', function (): void {
+    expect(PgvectorColumn::isVector('vector(64)'))->toBeTrue()
+        ->and(PgvectorColumn::isVector('vector'))->toBeTrue();
+});
+
+it('does not take other column types for vector columns', function (): void {
+    expect(PgvectorColumn::isVector('halfvec(64)'))->toBeFalse()
+        ->and(PgvectorColumn::isVector('sparsevec(64)'))->toBeFalse()
+        ->and(PgvectorColumn::isVector('jsonb'))->toBeFalse()
+        ->and(PgvectorColumn::isVector('vector(64)[]'))->toBeFalse();
+});
