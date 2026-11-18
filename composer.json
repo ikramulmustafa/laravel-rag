@@ -25,11 +25,13 @@
         "source": "https://github.com/ikramulmustafa/laravel-rag"
     },
     "require": {
-        "php": "^8.2",
-        "illuminate/console": "^12.0|^13.0",
-        "illuminate/database": "^12.0|^13.0",
-        "illuminate/http": "^12.0|^13.0",
-        "illuminate/support": "^12.0|^13.0",
+        "php": "^8.3",
+        "laravel/ai": "^1.4",
+        "illuminate/console": "^12.62|^13.15",
+        "illuminate/database": "^12.62|^13.15",
+        "illuminate/http": "^12.62|^13.15",
+        "illuminate/support": "^12.62|^13.15",
+        "illuminate/validation": "^12.62|^13.15",
         "symfony/finder": "^7.0|^8.0"
     },
     "require-dev": {

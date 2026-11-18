@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace Ikram\Rag\Tests;
 
 use Ikram\Rag\RagServiceProvider;
+use Laravel\Ai\AiServiceProvider;
 use Orchestra\Testbench\TestCase as Orchestra;
 
 abstract class TestCase extends Orchestra
 {
     protected function getPackageProviders($app): array
     {
-        return [RagServiceProvider::class];
+        return [AiServiceProvider::class, RagServiceProvider::class];
     }
 
     protected function defineEnvironment($app): void
@@ -25,6 +26,9 @@ abstract class TestCase extends Orchestra
             'database' => ':memory:',
             'prefix' => '',
         ]);
+
+        $app['config']->set('ai.default_for_embeddings', 'openai');
+        $app['config']->set('ai.providers.openai.key', 'test-key');
 
         $app['config']->set('rag.embedding.driver', 'fake');
         $app['config']->set('rag.embedding.dimensions', 64);

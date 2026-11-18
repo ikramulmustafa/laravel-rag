@@ -21,7 +21,7 @@ jobs:
 
       - uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
+          php-version: '8.3'
           extensions: mbstring
           coverage: none
 
@@ -36,12 +36,9 @@ jobs:
         # Laravel 12 and 13. Every 11.x release carries a Packagist security
         # advisory, so Composer's default policy refuses to install it and there
         # is no version of Laravel 11 this package could honestly claim to
-        # support. Laravel 12 requires PHP 8.2+; Laravel 13 requires PHP 8.3+.
+        # support. The Laravel AI SDK requires PHP 8.3+.
         laravel: ['12', '13']
-        php: ['8.2', '8.3', '8.4']
-        exclude:
-          - laravel: '13'
-            php: '8.2'
+        php: ['8.3', '8.4']
 
     name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }}
 

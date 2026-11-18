@@ -5,8 +5,8 @@
 [![CI](https://github.com/ikramulmustafa/laravel-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/ikramulmustafa/laravel-rag/actions/workflows/ci.yml)
 [![Packagist](https://img.shields.io/packagist/v/ikramulmustafa/laravel-rag.svg)](https://packagist.org/packages/ikramulmustafa/laravel-rag)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![PHP](https://img.shields.io/badge/php-8.2%2B-777BB4.svg?logo=php&logoColor=white)](https://www.php.net/)
-[![Laravel](https://img.shields.io/badge/laravel-12-FF2D20.svg?logo=laravel&logoColor=white)](https://laravel.com/)
+[![PHP](https://img.shields.io/badge/php-8.3%2B-777BB4.svg?logo=php&logoColor=white)](https://www.php.net/)
+[![Laravel](https://img.shields.io/badge/laravel-12%20%7C%2013-FF2D20.svg?logo=laravel&logoColor=white)](https://laravel.com/)
 
 ---
 
@@ -42,7 +42,7 @@ php artisan vendor:publish --tag=rag-config
 php artisan migrate
 ```
 
-Requires **PHP 8.2+** with **Laravel 12**, or **PHP 8.3+** with **Laravel 13**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
+Requires **PHP 8.3+** with **Laravel 12 or 13**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
 
 Laravel 11 is not supported. Every 11.x release now carries a Packagist security advisory, so Composer blocks it under its default policy and the version cannot be installed or tested at all. Claiming support for something CI cannot verify seemed worse than saying so here.
 
