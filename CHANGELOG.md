@@ -10,6 +10,47 @@ such change will be listed here under **Changed** with an upgrade note.
 
 ## [Unreleased]
 
+0.3.0 rebuilds the package on the official Laravel AI SDK. See [UPGRADING.md](UPGRADING.md).
+
+### Added
+
+- Embeddings go through `laravel/ai`: the new default `sdk` driver, with `provider`, `send_dimensions`, `batch_size`, `timeout` and `cache` under `rag.embedding`, and `Rag::extend()` to register other drivers.
+- `Rag::tool()`, a cited search tool for SDK agents, with a fixed collection and filters, allow-listed model filters and an output budget.
+- Optional reranking through the SDK (`rag.retrieval.rerank.*`); citations carry `rerank_score`.
+- `rag:reindex --stale` (only documents embedded with another model) and `--resize` (change the pgvector column width).
+- `rag_documents.content` stores the source text, and `rag_eval_runs.config` records the settings of each eval run; `--baseline` warns when they differ.
+- A weekly real-model eval workflow (`eval-real.yml`) using Ollama and `nomic-embed-text`.
+- `UPGRADING.md`.
+
+### Changed
+
+- Requires PHP 8.3+ and Laravel 12.62+ / 13.15+, plus `laravel/ai` `^1.4`.
+- Embedding ids are `{driver}:{model}:{dimensions}`. Ids written by 0.2 still match without a migration.
+- `retrieval.default_limit` is used when no limit is passed; a limit below 1 throws; blank queries return an empty result without an embedding call.
+- The mixed-model check is scoped to the searched collection and filters.
+- `Ingestor::confirmWith()` returns a clone instead of mutating the shared instance.
+- `RagManager` takes `(Container, EmbedderRegistry)` and resolves the retriever and ingestor lazily.
+- The `fake` driver's width comes from `rag.embedding.dimensions`.
+- Documents and chunks, the migrations and the eval recorder honour `rag.connection`.
+- Content that becomes empty on re-ingest removes its stale chunks, and a skipped ingest returns the existing document id.
+- Filter keys are validated against `/^[A-Za-z0-9_]+$/`.
+- README, badges, eval numbers and issue templates updated for 0.3.
+
+### Fixed
+
+- Vector widths are checked on ingest and retrieval instead of being trusted.
+- Reindex works for DB-ingested content and no longer blanks hashes before ingesting; a failure on one document no longer aborts the run.
+
+### Deprecated
+
+- The `openai` embedding driver name, an alias for `sdk` with provider `openai`. It is removed in 1.0. With a non-default `rag.embedding.base_url` it throws on first use instead of continuing.
+
+### Removed
+
+- `OpenAIEmbedder`, and the `rag.embedding.api_key` and `rag.embedding.base_url` keys; credentials and endpoints live in `config/ai.php`.
+- Token-usage reporting from embedding calls.
+- Support for PHP 8.2.
+
 ## [0.2.0] - 2026-10-09
 
 Laravel 13 support, and a chunker fix that changes chunk counts: run

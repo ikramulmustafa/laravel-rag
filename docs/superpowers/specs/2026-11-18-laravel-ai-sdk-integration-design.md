@@ -306,3 +306,17 @@ How it works:
 - The exact wording of the tool's description and of the README prose (plain, factual, no hype).
 - Commit granularity, as long as the bug-fix commits come before the SDK commits.
 - Whether the facade docblocks are generated or hand-written.
+
+## Amendments during implementation
+
+Where the build differs from the text above, these rulings win.
+
+- R1: The "once per process" deprecation warning is tracked on the `EmbedderRegistry` singleton, not a static, so each app instance warns once.
+- R2: `eval-real` lives in its own workflow file, `.github/workflows/eval-real.yml`, triggered by `schedule`, `workflow_dispatch` and `pull_request` filtered to that file, so `ci.yml` triggers are unchanged.
+- R3: `EmbeddingModelId::matches` follows 6.3 literally (a stored id with a `:<int>` suffix never matches by suffix removal), a limit below 1 throws, and blank detection covers Unicode whitespace.
+- R4: The deprecated `openai` alias fails closed with `InvalidArgumentException` when `base_url` is set to anything but the OpenAI default; 6.2 said it would only warn.
+- R5: CI runs only on push to `main` and on pull requests, so the controller pushes the branch and opens a draft PR to validate the pgvector job.
+- R6: `--resize` clears vectors with `DROP COLUMN` plus `ADD COLUMN`, not `ALTER COLUMN TYPE ... USING NULL`, to avoid a full table rewrite under an exclusive lock.
+- R7: Rerank `candidates` must be 1..10 and the pool sent to the reranker is capped at 100.
+- R8: The tool shortens its echoed query to stay within `maxChars`; superseded by R8b.
+- R8b: The echoed query is capped at 200 characters first, then citations are dropped or trimmed, then the query is shortened further if still needed.

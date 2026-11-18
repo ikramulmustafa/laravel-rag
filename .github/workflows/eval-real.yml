@@ -1,0 +1,85 @@
+name: Eval (real model)
+
+# Weekly retrieval eval with a real embedding model, for free: Ollama runs in the
+# runner and serves nomic-embed-text. The per-push eval in ci.yml uses the hashed
+# fake embedder, which proves the plumbing but not semantic retrieval.
+#
+# The pull_request trigger is filtered to this file so the job runs when it is
+# edited. GitHub only dispatches a workflow that exists on the default branch, so
+# a new workflow cannot be run by hand from a feature branch until it is merged.
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/eval-real.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  eval-real:
+    runs-on: ubuntu-latest
+    name: Retrieval eval (Ollama, nomic-embed-text)
+    timeout-minutes: 30
+
+    env:
+      # Credentials and endpoints live in config/ai.php. The ollama provider reads
+      # OLLAMA_URL (default http://localhost:11434) and needs no key.
+      RAG_EMBEDDING_DRIVER: sdk
+      RAG_EMBEDDING_PROVIDER: ollama
+      RAG_EMBEDDING_MODEL: nomic-embed-text
+      RAG_EMBEDDING_DIMENSIONS: 768
+      # Native mode: Ollama models take no dimensions parameter.
+      RAG_EMBEDDING_SEND_DIMENSIONS: false
+      # Same chunking as the fake-embedder eval, so the two are comparable.
+      RAG_CHUNK_SIZE: 200
+      RAG_CHUNK_OVERLAP: 40
+      DB_CONNECTION: sqlite
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo, pdo_sqlite, sqlite3
+          coverage: none
+
+      - run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Install Ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+
+      - name: Start Ollama
+        run: |
+          nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:11434 > /dev/null 2>&1; then
+              echo "ollama is up after ${i} checks"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ollama did not answer on 127.0.0.1:11434 within 120 seconds" >&2
+          cat "$RUNNER_TEMP/ollama.log" >&2
+          exit 1
+
+      - run: ollama pull nomic-embed-text
+
+      # A file database, so the run does not depend on pgvector or a column width.
+      - name: Migrate and ingest the fixture corpus
+        env:
+          DB_DATABASE: ${{ runner.temp }}/rag.sqlite
+        run: |
+          touch "$DB_DATABASE"
+          vendor/bin/testbench migrate --force
+          vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
+
+      # No --ci yet: the thresholds are set from the first run's numbers, then this
+      # step gains --ci.
+      - name: Evaluate retrieval with the real model
+        env:
+          DB_DATABASE: ${{ runner.temp }}/rag.sqlite
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --json

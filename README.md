@@ -1,6 +1,6 @@
 # laravel-rag
 
-**Retrieval-augmented generation for Laravel, with an eval harness that fails your build when retrieval quality drops.**
+**The RAG layer for the official Laravel AI SDK: ingestion, cited retrieval on any database, and an eval harness that fails your build when retrieval quality drops.**
 
 [![CI](https://github.com/ikramulmustafa/laravel-rag/actions/workflows/ci.yml/badge.svg)](https://github.com/ikramulmustafa/laravel-rag/actions/workflows/ci.yml)
 [![Packagist](https://img.shields.io/packagist/v/ikramulmustafa/laravel-rag.svg)](https://packagist.org/packages/ikramulmustafa/laravel-rag)
@@ -26,7 +26,7 @@ The RAG parts are deliberately unremarkable. The eval loop is the point.
 
 ## Contents
 
-- [Install](#install) · [Quick start](#quick-start) · [How it works](#how-it-works)
+- [Install](#install) · [Quick start](#quick-start) · [Use it from an agent](#use-it-from-an-agent) · [Why not SimilaritySearch?](#why-not-similaritysearch) · [How it works](#how-it-works)
 - [The eval harness](#the-eval-harness) · [Wiring it into CI](#wiring-it-into-ci)
 - [Design decisions](#design-decisions) · [Commands](#commands) · [Configuration](#configuration)
 - [Testing](#testing) · [Limitations](#limitations)
@@ -37,20 +37,45 @@ The RAG parts are deliberately unremarkable. The eval loop is the point.
 ## Install
 
 ```bash
-composer require ikramulmustafa/laravel-rag
+composer require laravel/ai ikramulmustafa/laravel-rag
+php artisan vendor:publish --tag=ai-config
 php artisan vendor:publish --tag=rag-config
 php artisan migrate
 ```
 
-Requires **PHP 8.3+** with **Laravel 12 or 13**, and **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** for production use. The migration creates the extension for you if the role has permission.
+Requires **PHP 8.3+** with **Laravel 12.62+ or 13.15+**, and the official [Laravel AI SDK](https://github.com/laravel/ai) (`laravel/ai`), which makes the embedding calls. **PostgreSQL with [pgvector](https://github.com/pgvector/pgvector)** is for production use; the migration creates the extension for you if the role has permission. SQLite and MySQL also work, by computing cosine similarity in PHP.
 
 Laravel 11 is not supported. Every 11.x release now carries a Packagist security advisory, so Composer blocks it under its default policy and the version cannot be installed or tested at all. Claiming support for something CI cannot verify seemed worse than saying so here.
 
+Upgrading from 0.2? Read [UPGRADING.md](UPGRADING.md).
+
+### Choose an embedding provider
+
+Credentials and endpoints live in `config/ai.php`, which is the SDK's file. This package only says which provider and model to use:
+
 ```env
 OPENAI_API_KEY=sk-...
+RAG_EMBEDDING_PROVIDER=openai
 RAG_EMBEDDING_MODEL=text-embedding-3-small
 RAG_EMBEDDING_DIMENSIONS=1536
 ```
+
+`RAG_EMBEDDING_PROVIDER` names a provider in `config/ai.php`. Left empty, it uses the SDK's `ai.default_for_embeddings`. It must be a single name: an SDK failover list is rejected, because a fallback provider would store another model's vectors under this model's id.
+
+Any SDK provider that supports embeddings works. For a local model through Ollama, with no key and no cost:
+
+```env
+RAG_EMBEDDING_PROVIDER=ollama
+RAG_EMBEDDING_MODEL=nomic-embed-text
+RAG_EMBEDDING_DIMENSIONS=768
+RAG_EMBEDDING_SEND_DIMENSIONS=false
+```
+
+`RAG_EMBEDDING_SEND_DIMENSIONS=false` is "native" mode: no `dimensions` parameter is sent, for models that reject one. The width is still checked on every vector. Native mode only omits the parameter on providers whose SDK default width is 0 (`ollama` and `openai-compatible`). The SDK's `openai` provider always sends a width, so `text-embedding-ada-002` only works through `openai-compatible` in native mode.
+
+`RAG_EMBEDDING_DRIVER` is `sdk` by default. `fake` is a deterministic, network-free embedder for tests. To add your own, call `Rag::extend('name', fn ($app) => new MyEmbedder)` from a service provider, before the embedder is first used.
+
+The `fake` driver builds vectors of `rag.embedding.dimensions` (default 1536), not a fixed 64. This repository's tests and CI set `RAG_EMBEDDING_DIMENSIONS=64` explicitly; a fake corpus ingested at one width cannot be searched at another.
 
 ---
 
@@ -101,6 +126,95 @@ $answer = $llm->complete(<<<PROMPT
 
 return ['answer' => $answer, 'citations' => $result->citations];
 ```
+
+---
+
+## Use it from an agent
+
+`Rag::tool()` returns a cited search tool for an agent built on the Laravel AI SDK:
+
+```php
+use Ikram\Rag\Facades\Rag;
+use Laravel\Ai\Contracts\Agent;
+use Laravel\Ai\Contracts\HasTools;
+use Laravel\Ai\Promptable;
+
+final class SupportAgent implements Agent, HasTools
+{
+    use Promptable;
+
+    public function instructions(): string
+    {
+        return 'Answer from the knowledge base and cite the sources you used.';
+    }
+
+    public function tools(): iterable
+    {
+        return [Rag::tool(collection: 'docs', allowedFilters: ['product'])];
+    }
+}
+```
+
+Options, all optional:
+
+| argument | meaning |
+|---|---|
+| `collection` | Fixed. The model cannot change it. |
+| `filters` | Fixed metadata filters, always applied; they override anything the model supplies. |
+| `allowedFilters` | Metadata keys the model may filter on, each exposed as an optional string parameter. |
+| `limit` | Default and maximum results. `null` uses `rag.retrieval.default_limit`. |
+| `name` | Tool name, default `search_knowledge_base`. Must match `/^[A-Za-z0-9_-]{1,64}$/`. |
+| `description` | What the model is told the tool does. |
+| `maxChars` | Output budget, default 8000, minimum 500. |
+
+The tool takes `query` and `limit` from the model, plus any allowed filter keys, and ignores everything else it is sent. `query` and `limit` cannot be used as filter keys, and a collection cannot be both fixed and allowed as a filter.
+
+It returns compact JSON the model can quote from:
+
+```json
+{"query":"refund window","count":1,"citations":[{"id":12,"source":"policies/refunds.md","score":0.8123,"text":"..."}],"truncated":false}
+```
+
+- `id` is the chunk's row id. It is stable within a conversation, not across reindexes.
+- `score` is the vector similarity. With reranking on, each citation also carries `rerank_score`.
+- When the output would exceed `maxChars`, the echoed query is capped at 200 characters first, then the lowest-ranked citations are dropped, then the last passage is trimmed at a word boundary, and the echoed query is shortened further if that is still not enough. `truncated` is `true` whenever anything was cut.
+- With no results the tool returns `count: 0`, an empty `citations` list and a note saying nothing relevant was found.
+- Errors never reach the model. A failed search returns a fixed message telling it to answer without the knowledge base, and the exception goes to Laravel's exception reporter.
+
+Retrieved passages are document content, not instructions. The default tool description tells the model so, but a description is not a barrier. Treat everything the tool returns as untrusted input, and see [SECURITY.md](SECURITY.md).
+
+### Reranking
+
+Reranking is off by default. When on, the retriever fetches `limit * candidates` chunks by vector similarity and asks an SDK reranking model to pick the best `limit`:
+
+```env
+RAG_RERANK=true
+RAG_RERANK_PROVIDER=cohere
+RAG_RERANK_CANDIDATES=3
+```
+
+- `RAG_RERANK_MODEL` empty means the provider's default reranking model.
+- `RAG_RERANK_PROVIDER` empty means `ai.default_for_reranking`. It must be a single provider name.
+- `RAG_RERANK_CANDIDATES` must be between 1 and 10, and the pool sent to the reranker is capped at 100. With reranking on, a `limit` above 100 returns at most 100 results.
+- `score` stays the vector score, and `topScore()` is the highest vector score. The reranker's score is on the citation as `rerankScore`, and as `rerank_score` in the tool's output.
+- If the reranker fails, the search still answers in vector order and logs a warning.
+- It adds one provider call per search.
+
+---
+
+## Why not `SimilaritySearch`?
+
+The SDK ships a `SimilaritySearch` tool: you point it at an Eloquent model and a vector column, and it returns matching rows. It is a fine start for a Postgres app that already has vectors in a table. This package covers what it leaves out:
+
+| | `SimilaritySearch` (SDK) | `laravel-rag` |
+|---|---|---|
+| Databases | pgvector; throws on MySQL and SQLite | pgvector in production; SQLite and MySQL compute cosine in PHP |
+| Scores | A `minSimilarity` cutoff, but the score is not returned | Every citation carries its similarity score; `min_score` drops weak matches |
+| Citations | The matching rows, minus the vector column | Chunk, source, position and score on every result |
+| Chunking and ingestion | None: you bring a table that already holds vectors | `rag:ingest` chunks, hashes, embeds and stores; unchanged documents are skipped |
+| Evals | None | `rag:eval` scores recall, MRR and pass rate, and `--ci` fails the build |
+| Provider for query embedding | The query is embedded with the SDK's default embeddings provider; nothing records which model made the stored vectors | The embedding model id is stored on every chunk, and a search with a different model throws |
+They are not exclusive. `Rag::tool()` is an SDK tool, so it sits in the same `tools()` list.
 
 ---
 
@@ -184,8 +298,8 @@ $ vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=4
 +----------------+-------+-------+-------+
 | pass_rate      | 0.800 | 0.900 | BELOW |
 | recall_at_k    | 1.000 | 0.800 | pass  |
-| mrr            | 1.000 | 0.600 | pass  |
-| mean_top_score | 0.311 | —     |       |
+| mrr            | 0.900 | 0.600 | pass  |
+| mean_top_score | 0.522 | —     |       |
 +----------------+-------+-------+-------+
 
    WARN  1 case(s) failed:
@@ -260,7 +374,8 @@ way — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml), where the
 `eval` job stands up Postgres with pgvector, ingests `tests/Fixtures/corpus` and
 runs the suite against it. Inside a package there is no application to boot, so
 those steps call `vendor/bin/testbench` instead of `php artisan`; the commands and
-flags are identical.
+flags are identical. A weekly real-model run is described under
+[Testing](#real-model-eval).
 
 Floors live in `config/rag.php`:
 
@@ -281,33 +396,31 @@ php artisan rag:eval --save=.rag-baseline.json          # on main
 php artisan rag:eval --baseline=.rag-baseline.json --ci # on a PR
 ```
 
-Here is a real one. The baseline was saved at the default chunk size of 1000; the
-comparison run is the same corpus and the same suite re-chunked at 200:
+Here is a real one. The baseline was saved at the default chunk size of 1000 and
+`k=2`; the comparison run is the same corpus and the same suite re-chunked at 200
+with an overlap of 40:
 
 ```
    INFO  Against baseline:
 
-  pass_rate        1.000 → 0.800  -0.200
+  pass_rate        1.000 → 1.000  +0.000
   recall_at_k      1.000 → 1.000  +0.000
-  mrr              0.767 → 1.000  +0.233
-  mean_top_score   0.531 → 0.550  +0.018
+  mrr              0.900 → 1.000  +0.100
+  mean_top_score   0.522 → 0.550  +0.027
 
-   WARN  1 metric(s) regressed:
-
-  ↓ pass_rate dropped 0.2000 (1.0000 -> 0.8000)
+   WARN  Baseline was run with different settings: chunk_size, chunk_overlap.
 ```
 
-That is the entire argument for this package, and it is more interesting than a
-row of red numbers would have been. Smaller chunks made ranking strictly better —
-`mrr` went from 0.767 to a perfect 1.000, so the right document now comes back
-first every time. Judged on the metric most people reach for, the change is an
-improvement and you ship it.
+Smaller chunks made ranking better here: `mrr` went from 0.900 to 1.000, so the
+right document comes back first for every answerable case. The warning underneath
+is the other half of the feature. Each run records the settings it was made with
+(`k`, chunking, `min_score`, reranking and the embedding model id), and a
+comparison across different settings says so, because a metric that moved after
+a chunking change is not a like-for-like regression or improvement.
 
-It also tightened the chunks enough that a shipping paragraph about PO boxes
-started fitting inside the window for a question about annual leave, which is a
-`must_not_contain` violation and drops `pass_rate` from 1.000 to 0.800. Every unit
-test still passes. Nothing throws. Retrieval got better and worse at the same
-time, and only the diff says so.
+Both outcomes are possible, and the diff is what tells you which one you got.
+Retrieval can get better on one metric and worse on another at the same time with
+every unit test still passing and nothing throwing.
 
 `--baseline` on its own reports. `--ci` is what makes any of it fail the build,
 and with both flags a build fails on a regression as well as on a floor breach.
@@ -330,7 +443,7 @@ rounding artefact.
 ### Eval history
 
 Every `rag:eval` run is also written to `rag_eval_runs` — scores, failure
-reasons, the embedding model that produced them, and the commit if one can be
+reasons, the settings it ran with (`k`, chunking, `min_score`, reranking), the embedding model that produced them, and the commit if one can be
 determined from the environment or `.git/HEAD`. `--baseline` compares two points;
 the table keeps all of them, which is what you want when a regression surfaces
 weeks after the commit that caused it. Pass `--no-record` to skip the write. If
@@ -355,13 +468,16 @@ So `embedding_model` is stored on every row, and the retriever refuses to search
 ```
 Ikram\Rag\Exceptions\MixedEmbeddingModels
 
-  Corpus was embedded with "openai:text-embedding-3-small" but the configured
-  embedder is "openai:text-embedding-3-large". Searching across models returns
-  confident nonsense. Either restore the previous model in config/rag.php, or
-  run `php artisan rag:reindex`.
+  The searched corpus was embedded with "openai:text-embedding-3-small:1536" but
+  the configured embedder is "openai:text-embedding-3-large:1536". Searching
+  across models returns confident nonsense. Either restore the previous model in
+  config/rag.php, or run `php artisan rag:reindex`.
 ```
 
-The check runs on every `retrieve()` call, before the query is embedded, so it
+The id is `{driver}:{model}:{dimensions}`. Ids written by 0.2 have no width
+suffix, and they still match the same model at the same width, so upgrading does
+not force a reindex.
+The check runs on every `retrieve()` call, scoped to the collection and filters being searched, before the query is embedded, so it
 fails on the first search after a mismatched model swap rather than at some
 later point that happens to notice. A hard failure there beats plausible
 nonsense in production.
@@ -388,7 +504,7 @@ There is no API for "just give me the context string." `RetrievalResult` holds t
 |---|---|
 | `rag:ingest {path}` | Chunk, embed and store a file or directory |
 | `rag:eval` | Run the suite; `--ci` exits non-zero below threshold |
-| `rag:reindex` | Re-embed everything with the current model |
+| `rag:reindex` | Re-embed stored documents with the current model; `--stale` only those from another model, `--resize` changes the pgvector column width |
 
 <details>
 <summary><strong>Full options</strong></summary>
@@ -410,8 +526,22 @@ rag:eval --no-record                        # skip the write to rag_eval_runs
 
 # Reindex
 rag:reindex --collection=policies
-rag:reindex --force
+rag:reindex --stale                        # only documents embedded with another model (or not at all)
+rag:reindex --resize                        # pgvector: change the column to rag.embedding.dimensions, then --stale
+rag:reindex --force                         # skip confirmation
 ```
+
+`rag:reindex` re-embeds from the content stored at ingest time, and re-reads the
+file only for documents ingested before 0.3. A failure is reported per document
+and the exit code is non-zero if any failed; run it again to resume.
+
+`--resize` is for switching to a model of a different width on Postgres. It
+refuses non-`vector` columns (for example `halfvec`) and cannot be combined with
+`--collection`. It clears every vector by dropping and re-adding the column
+(no table rewrite), and recreates the HNSW index only when the width is 2000 or
+less. Until re-embedding finishes, search returns fewer results rather than
+erroring, because rows without a vector are skipped. Run `rag:reindex --stale`
+to finish a partial run.
 
 Directory ingestion records sources with forward slashes on every platform, so a
 suite committed on Linux still matches a corpus ingested on Windows.
@@ -435,6 +565,10 @@ everything as unchanged and skipped, leaves the old chunks in place, and the eva
 that follows scores the configuration you were trying to replace. `rag:reindex`
 clears the hashes and rebuilds, which is what actually applies the change.
 
+**`embedding.*`** — provider, model, width and batching; see [Choose an embedding provider](#choose-an-embedding-provider). A provider or model change at the same width needs `rag:reindex --stale`.
+
+**`retrieval.default_limit`** is used whenever no limit is passed. A limit below 1 throws, and a blank query returns an empty result without calling the embedding provider. Filter keys must match `/^[A-Za-z0-9_]+$/`.
+
 **`retrieval.min_score`** — starts at `0.0` (disabled). Raise it once your suite contains `expect_no_answer` cases, since those are what tell you where the floor belongs.
 
 ---
@@ -456,13 +590,28 @@ That matters more than it sounds. An offline suite runs on every push. A suite
 needing an API key runs nightly, if at all.
 
 CI additionally runs the eval job against real Postgres with pgvector, so the ANN
-path and the in-PHP fallback are both exercised. On the fixture suite the two
-agree exactly — `pass_rate` 1.000, `recall_at_k` 1.000, `mrr` 0.767,
-`mean_top_score` 0.531 from both the `<=>` cosine operator over an HNSW index and
-the PHP implementation. That agreement is the point of running both: it is what
-tells you the portable fallback is a fallback and not a second, subtly different
-retriever.
+path and the in-PHP fallback are both exercised, and gates it on the thresholds in
+`config/rag.php`. Run locally on the in-PHP path (SQLite, the fake embedder at 64
+dimensions, 200-character chunks with an overlap of 40, `k=2`), the fixture suite
+scores:
 
+| metric | score |
+|---|---|
+| `pass_rate` | 1.000 |
+| `recall_at_k` | 1.000 |
+| `mrr` | 1.000 |
+| `mean_top_score` | 0.550 |
+
+### Real-model eval
+
+The fake embedder proves the plumbing, not semantic retrieval. A separate
+workflow, [`eval-real.yml`](.github/workflows/eval-real.yml), runs weekly (Monday
+06:00 UTC) and on demand. It installs Ollama in the runner, pulls
+`nomic-embed-text` (768 dimensions, native mode), and runs the same fixture suite
+against a SQLite file database. It needs no API key and costs nothing.
+
+<!-- TODO(task-12 phase 2): record the real-model numbers and date here once the
+first eval-real run has finished, and set thresholds from them. -->
 There is also `tests/verify-standalone.php`, which covers chunking, the fake
 embedder, cosine similarity, pgvector literal formatting and the full eval
 scoring path on bare PHP with no Composer dependencies at all:
@@ -482,11 +631,11 @@ Worth knowing before you adopt this.
 
 **Postgres or nothing, in production.** SQLite and MySQL work, but fall back to computing cosine similarity in PHP, which loads every candidate row into memory. Fine for tests and small corpora. Not fine at scale.
 
-**No reranking.** Single-stage vector retrieval only. A cross-encoder reranker would improve precision at `k`; it is not here yet.
+**Reranking is optional and off by default.** Retrieval is single-stage vector search unless you turn on [reranking](#reranking), which adds one provider call per search.
 
 **No hybrid search.** Dense vectors only, no BM25 blending. Exact keyword matches — product codes, names, identifiers — are where pure vector search is weakest.
 
-**Embedding drivers.** OpenAI plus the fake. Implementing `Embedder` is four methods if you need another.
+**Embedding drivers.** `sdk` (any Laravel AI SDK provider that supports embeddings) and `fake`. The old `openai` driver name still works as a deprecated alias and goes in 1.0. For anything else, implementing `Embedder` and registering it with `Rag::extend()` is enough.
 
 **`FakeEmbedder` is not semantic.** It is hash-based bag-of-words. It preserves
 enough ordering to test retrieval logic. It is not a small language model, and
