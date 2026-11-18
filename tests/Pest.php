@@ -119,3 +119,15 @@ function caught(Closure $fn): Throwable
 
     throw new RuntimeException('Expected an exception, nothing was thrown.');
 }
+
+/**
+ * Skip the calling test unless it is running against Postgres. The pgsql group is
+ * excluded from the default run in phpunit.xml; this is the second guard, so
+ * `pest --group=pgsql` on a machine without Postgres skips instead of erroring.
+ */
+function skipUnlessPgsql(): void
+{
+    if (config('database.default') !== 'pgsql') {
+        test()->markTestSkipped('Needs Postgres with pgvector (DB_CONNECTION=pgsql).');
+    }
+}

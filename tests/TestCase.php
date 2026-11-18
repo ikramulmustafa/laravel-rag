@@ -37,6 +37,25 @@ abstract class TestCase extends Orchestra
             'prefix' => '',
         ]);
 
+        // The pgsql group runs against a real Postgres with pgvector, which CI
+        // provides. Local runs and the main matrix never set DB_CONNECTION=pgsql,
+        // so they stay on SQLite.
+        if (env('DB_CONNECTION') === 'pgsql') {
+            $app['config']->set('database.default', 'pgsql');
+            $app['config']->set('database.connections.pgsql', [
+                'driver' => 'pgsql',
+                'host' => env('DB_HOST', '127.0.0.1'),
+                'port' => env('DB_PORT', '5432'),
+                'database' => env('DB_DATABASE', 'rag_test'),
+                'username' => env('DB_USERNAME', 'postgres'),
+                'password' => env('DB_PASSWORD', ''),
+                'charset' => 'utf8',
+                'prefix' => '',
+                'search_path' => 'public',
+                'sslmode' => 'prefer',
+            ]);
+        }
+
         $app['config']->set('ai.default_for_embeddings', 'openai');
         $app['config']->set('ai.providers.openai.key', 'test-key');
 

@@ -105,6 +105,11 @@ jobs:
 
       - run: composer update --prefer-dist --no-interaction --no-progress
 
+      # Before the ingest: these tests migrate and roll back their own schema, so
+      # the database is empty again (bar the migrations table) when it finishes.
+      - name: Postgres-only tests (pgvector path)
+        run: vendor/bin/pest --group=pgsql
+
       - name: Ingest the fixture corpus
         run: |
           vendor/bin/testbench migrate --force
@@ -122,6 +127,14 @@ jobs:
       - name: Check the run was recorded in rag_eval_runs
         run: |
           php -r '$p = new PDO("pgsql:host=localhost;port=5432;dbname=rag_test", "postgres", "postgres"); $r = $p->query("SELECT suite, embedding_model, total_cases FROM rag_eval_runs ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC); if (! $r) { fwrite(STDERR, "no eval run was recorded\n"); exit(1); } if ($r["embedding_model"] !== "fake:deterministic-hash:64") { fwrite(STDERR, "recorded run has the wrong embedding model: " . $r["embedding_model"] . "\n"); exit(1); } echo "recorded: ", json_encode($r), PHP_EOL;'
+
+      # Corpora ingested before 0.3.0 carry the suffix-less id. Rewrite every row to
+      # that form and the eval must still pass, or an upgrade would lock them out.
+      # --no-record keeps the recorded-run check above meaningful.
+      - name: Check a legacy suffix-less corpus still searches
+        run: |
+          php -r '$p = new PDO("pgsql:host=localhost;port=5432;dbname=rag_test", "postgres", "postgres"); $s = $p->prepare("UPDATE rag_chunks SET embedding_model = ?"); $s->execute(["fake:deterministic-hash"]); if ($s->rowCount() < 1) { fwrite(STDERR, "no chunks to rewrite\n"); exit(1); } echo "rewrote ", $s->rowCount(), " chunks", PHP_EOL;'
+          vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --ci --no-record
 
   static:
     runs-on: ubuntu-latest
