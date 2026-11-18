@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Ikram\Rag\Documents\Chunk;
 use Ikram\Rag\Documents\Document;
 use Ikram\Rag\Documents\Ingestor;
+use Ikram\Rag\Embedding\FakeEmbedder;
+use Ikram\Rag\Facades\Rag;
 
 it('ingests a directory of markdown files', function (): void {
     $dir = sys_get_temp_dir().'/rag-ingest-'.uniqid();
@@ -167,4 +170,81 @@ it('warns when the baseline was produced by a different embedding model', functi
 
     unlink($suite);
     unlink($baseline);
+});
+
+it('reindexes content that was ingested from the database', function (): void {
+    Rag::ingest('db:1', 'Refunds are available within 30 days of delivery.');
+
+    useEmbedder(new FakeEmbedder(32));
+
+    $this->artisan('rag:reindex', ['--force' => true])->assertSuccessful();
+
+    expect(Chunk::query()->pluck('embedding_model')->unique()->all())
+        ->toBe(['fake:deterministic-hash:32']);
+});
+
+it('reindexes only stale documents with --stale', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('db:fresh', 'Shipping takes three to five working days.');
+    $ingestor->ingest('db:stale', 'Refunds are available within 30 days of delivery.');
+
+    $fresh = Document::where('source', 'db:fresh')->firstOrFail();
+    $stale = Document::where('source', 'db:stale')->firstOrFail();
+    $freshChunkIds = $fresh->chunks()->pluck('id')->all();
+
+    Chunk::where('document_id', $stale->id)->update(['embedding_model' => 'old:model']);
+
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--stale' => true, '--force' => true])->assertSuccessful();
+
+    expect($spy->calls)->toBe(1)
+        ->and($fresh->chunks()->pluck('id')->all())->toBe($freshChunkIds)
+        ->and($stale->chunks()->pluck('embedding_model')->unique()->all())->toBe(['fake:deterministic-hash:64']);
+});
+
+it('warns and succeeds when --stale finds nothing stale', function (): void {
+    app(Ingestor::class)->ingest('db:1', 'Refunds are available within 30 days of delivery.');
+
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--stale' => true])
+        ->expectsOutputToContain('No stale documents')
+        ->assertSuccessful();
+
+    expect($spy->calls)->toBe(0);
+});
+
+it('keeps going and fails at the end when one document cannot be reindexed', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('db:gone', 'Text that will lose its stored copy.');
+    $ingestor->ingest('db:good', 'Annual leave accrues monthly.');
+
+    Document::where('source', 'db:gone')->update(['content' => null]);
+
+    useEmbedder(new FakeEmbedder(32));
+
+    $this->artisan('rag:reindex', ['--force' => true])
+        ->expectsOutputToContain('db:gone')
+        ->assertFailed();
+
+    $good = Document::where('source', 'db:good')->firstOrFail();
+
+    expect($good->chunks()->pluck('embedding_model')->unique()->all())
+        ->toBe(['fake:deterministic-hash:32']);
+});
+
+it('does not blank the hash when reindexing fails', function (): void {
+    app(Ingestor::class)->ingest('db:1', 'Refunds are available within 30 days of delivery.');
+
+    $hash = Document::firstOrFail()->content_hash;
+
+    $spy = useSpyEmbedder();
+    $spy->fail = true;
+
+    $this->artisan('rag:reindex', ['--force' => true])
+        ->expectsOutputToContain('embedding provider unavailable')
+        ->assertFailed();
+
+    expect(Document::firstOrFail()->content_hash)->toBe($hash);
 });

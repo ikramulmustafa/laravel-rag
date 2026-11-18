@@ -9,22 +9,7 @@ use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Exceptions\DimensionMismatch;
 use Ikram\Rag\Exceptions\MixedEmbeddingModels;
 use Ikram\Rag\Facades\Rag;
-use Ikram\Rag\RagManager;
 use Illuminate\Support\Facades\DB;
-
-/**
- * Swap the embedder and drop every singleton built on the old one, so the next
- * resolve of the retriever or the facade picks the replacement up.
- */
-function useRetrievalEmbedder(Embedder $embedder): void
-{
-    app()->instance(Embedder::class, $embedder);
-    app()->forgetInstance(Retriever::class);
-    app()->forgetInstance(Ingestor::class);
-    app()->forgetInstance('rag');
-    app()->forgetInstance(RagManager::class);
-    Rag::clearResolvedInstance('rag');
-}
 
 beforeEach(function (): void {
     $ingestor = app(Ingestor::class);
@@ -162,7 +147,7 @@ it('rejects a stored vector of another width on the in-PHP path', function (): v
 });
 
 it('rejects a query vector that does not match the configured width', function (): void {
-    useRetrievalEmbedder(new class implements Embedder
+    useEmbedder(new class implements Embedder
     {
         public function embed(array $texts): array
         {
@@ -190,7 +175,7 @@ it('rejects a query vector that does not match the configured width', function (
 });
 
 it('returns an empty result for a blank query without embedding', function (): void {
-    useRetrievalEmbedder(new class implements Embedder
+    useEmbedder(new class implements Embedder
     {
         public function embed(array $texts): array
         {
@@ -261,7 +246,7 @@ it('rejects a configured default limit below one', function (): void {
 });
 
 it('does not take a stored full id for a legacy one in the mixed-model guard', function (): void {
-    useRetrievalEmbedder(new class implements Embedder
+    useEmbedder(new class implements Embedder
     {
         public function embed(array $texts): array
         {
