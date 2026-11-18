@@ -40,6 +40,9 @@ final class SearchKnowledgeBase implements Tool
 
     private const MAX_QUERY_LENGTH = 1000;
 
+    /** How much of the query an over-budget answer echoes back, before anything else is cut. */
+    private const ECHO_LENGTH = 200;
+
     /** Unicode-aware, like VectorRetriever's: U+00A0 or U+3000 alone is still a blank query. */
     private const BLANK = '/^[\s\p{Z}]*$/u';
 
@@ -197,9 +200,11 @@ final class SearchKnowledgeBase implements Tool
 
     /**
      * Fit the answer into `maxChars`, measured on the encoded JSON so escaping is
-     * counted. In order, until it fits: drop the lowest-ranked citations (keeping
-     * one), cut the remaining citation's text, then shorten the echoed query. A
-     * model given a cut-down answer is told so through `truncated`.
+     * counted. The echoed query goes first, being the part the model needs least
+     * (it wrote it). In order, until it fits: cap the echoed query at 200
+     * characters, drop the lowest-ranked citations (keeping one), cut the remaining
+     * citation's text, then shorten the echoed query further. A model given a
+     * cut-down answer is told so through `truncated`.
      *
      * Sources are never shortened, since the model cites by them. They still fit:
      * with one citation, a `…` query and a `…` text, everything but the source is
@@ -217,6 +222,8 @@ final class SearchKnowledgeBase implements Tool
         if ($this->fits($json)) {
             return $json;
         }
+
+        $query = $this->capEcho($query);
 
         while (count($rows) > 1 && ! $this->fits($this->success($query, $rows, true))) {
             array_pop($rows);
@@ -239,12 +246,29 @@ final class SearchKnowledgeBase implements Tool
         return $this->success($query, $rows, true);
     }
 
-    /** The empty answer echoes the query too, so a long one is shortened to fit (with a `…` query it is 75 characters). */
+    /**
+     * The empty answer echoes the query too, so one that overflows is capped and,
+     * if need be, shortened further (with a `…` query it is 75 characters).
+     */
     private function noResults(string $query): string
     {
         $json = $this->empty($query);
 
+        if ($this->fits($json)) {
+            return $json;
+        }
+
+        $json = $this->empty($query = $this->capEcho($query));
+
         return $this->fits($json) ? $json : $this->empty($this->shorten($query, $this->empty(...)));
+    }
+
+    /** At most ECHO_LENGTH characters, `…` included, cut at whitespace. */
+    private function capEcho(string $query): string
+    {
+        return mb_strlen($query) > self::ECHO_LENGTH
+            ? $this->cutAt($query, self::ECHO_LENGTH - 1).'…'
+            : $query;
     }
 
     /**

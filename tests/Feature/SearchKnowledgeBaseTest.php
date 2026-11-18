@@ -312,6 +312,45 @@ it('cuts at any whitespace, never inside a word', function (): void {
         ->and(preg_match('/[\s\p{Z}]$/u', $kept))->toBe(0);
 });
 
+it('shortens a long echoed query before cutting passage text', function (): void {
+    $query = str_repeat('é', 1000);
+    $citations = [
+        new Citation(1, 1, 'docs/refunds.md', 'Refunds are allowed within 30 days of delivery.', 0, 0.9),
+        new Citation(2, 2, 'docs/shipping.md', 'Standard shipping takes 3 to 5 working days.', 0, 0.8),
+    ];
+    $spy = spyRetriever(fn (string $q): RetrievalResult => new RetrievalResult($q, $citations, 'm'));
+
+    $json = (new SearchKnowledgeBase($spy, maxChars: 600))->handle(new Request(['query' => $query]));
+    $out = decodeTool($json);
+
+    expect(mb_strlen($json))->toBeLessThanOrEqual(600)
+        ->and($out['citations'][0]['text'])->toBe('Refunds are allowed within 30 days of delivery.')
+        ->and($out['count'])->toBe(2)
+        ->and($out['query'])->toEndWith('…')
+        ->and(mb_strlen($out['query']))->toBeLessThanOrEqual(200)
+        ->and($out['truncated'])->toBeTrue();
+});
+
+it('caps a long echoed query at 200 characters when nothing matched and it overflows', function (): void {
+    $spy = spyRetriever(fn (string $q): RetrievalResult => new RetrievalResult($q, [], 'm'));
+
+    $out = decodeTool((new SearchKnowledgeBase($spy, maxChars: 500))->handle(new Request(['query' => str_repeat('é', 1000)])));
+
+    expect(mb_strlen($out['query']))->toBe(200)
+        ->and($out['query'])->toEndWith('…')
+        ->and($out['note'])->toBe('No relevant passages found.');
+});
+
+it('leaves a long echoed query alone when the output fits', function (): void {
+    $query = str_repeat('word ', 100);
+    $spy = spyRetriever(fn (string $q): RetrievalResult => new RetrievalResult($q, longCitations(2, 3), 'm'));
+
+    $out = decodeTool((new SearchKnowledgeBase($spy, maxChars: 8000))->handle(new Request(['query' => $query])));
+
+    expect($out['query'])->toBe($query)
+        ->and($out['truncated'])->toBeFalse();
+});
+
 it('shortens an echoed query that would break the budget', function (bool $withResults, string $unit): void {
     $query = mb_substr(str_repeat($unit, 1000), 0, 1000);
     $citations = $withResults ? longCitations(3, 10) : [];
