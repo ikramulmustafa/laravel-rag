@@ -227,6 +227,16 @@ check('counts citations', fn () => count($result) === 3);
 check('deduplicates document ids', fn () => $result->documentIds() === [10, 11]);
 check('deduplicates sources', fn () => $result->sources() === ['a.md', 'b.md']);
 check('reports the top score', fn () => $result->topScore() === 0.9);
+check('top score is the maximum, not the first', fn () => (new RetrievalResult('q', [
+    new Citation(1, 1, 'a.md', 't', 0, 0.2),
+    new Citation(2, 1, 'a.md', 't', 1, 0.8),
+], 'm'))->topScore() === 0.8);
+check('rerank_score appears in json only when set', function () {
+    $plain = (new Citation(1, 1, 'a.md', 't', 0, 0.5))->jsonSerialize();
+    $reranked = (new Citation(1, 1, 'a.md', 't', 0, 0.5))->withRerankScore(0.91234)->jsonSerialize();
+
+    return ! array_key_exists('rerank_score', $plain) && $reranked['rerank_score'] === 0.9123;
+});
 check('is iterable', fn () => count(iterator_to_array($result)) === 3);
 check('builds numbered prompt markers', fn () => str_contains($result->toPrompt(), '[1] source: a.md')
     && str_contains($result->toPrompt(), '[3] source: b.md'));

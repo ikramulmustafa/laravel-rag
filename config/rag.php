@@ -83,6 +83,19 @@ return [
     'retrieval' => [
         'default_limit' => (int) env('RAG_RETRIEVAL_LIMIT', 5),
         'min_score' => (float) env('RAG_RETRIEVAL_MIN_SCORE', 0.0),
+
+        // Optional second pass: fetch `limit * candidates` by vector similarity, then
+        // let a reranking model (through the SDK) pick the best `limit`. `provider` null
+        // means `ai.default_for_reranking`; it must be a single name, not a failover
+        // list, so scores stay comparable across a run. If the reranker fails, the
+        // vector order is returned and a warning is logged. Off by default: it adds
+        // one provider call per search.
+        'rerank' => [
+            'enabled' => (bool) env('RAG_RERANK', false),
+            'provider' => env('RAG_RERANK_PROVIDER'),
+            'model' => env('RAG_RERANK_MODEL'),
+            'candidates' => (int) env('RAG_RERANK_CANDIDATES', 3),
+        ],
     ],
 
     /*
