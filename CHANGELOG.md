@@ -19,7 +19,8 @@ such change will be listed here under **Changed** with an upgrade note.
 - Optional reranking through the SDK (`rag.retrieval.rerank.*`); citations carry `rerank_score`.
 - `rag:reindex --stale` (only documents embedded with another model) and `--resize` (change the pgvector column width).
 - `rag_documents.content` stores the source text, and `rag_eval_runs.config` records the settings of each eval run; `--baseline` warns when they differ.
-- A weekly real-model eval workflow (`eval-real.yml`) using Ollama and `nomic-embed-text`.
+- A weekly real-model eval workflow (`eval-real.yml`) using Ollama and `nomic-embed-text`, gated with `--ci`.
+- `RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K` and `RAG_EVAL_MIN_MRR` override the `rag.eval.thresholds` floors (defaults unchanged: 0.90, 0.80, 0.60).
 - `UPGRADING.md`.
 
 ### Changed

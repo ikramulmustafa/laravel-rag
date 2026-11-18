@@ -115,7 +115,9 @@ return [
     | Evaluation
     |--------------------------------------------------------------------------
     | Thresholds are enforced by `rag:eval --ci`, which exits non-zero when any
-    | metric falls below its floor. Wire that into CI and retrieval regressions
+    | metric falls below its floor. Each can be overridden per environment with
+    | RAG_EVAL_MIN_PASS_RATE, RAG_EVAL_MIN_RECALL_AT_K and RAG_EVAL_MIN_MRR, which
+    | is how a real embedding model gets higher floors than the hashed fake one. Wire that into CI and retrieval regressions
     | fail the build instead of reaching production silently.
     |
     | `tolerances` applies only when `--baseline` names a previous run. Thresholds
@@ -129,9 +131,9 @@ return [
         'suite_path' => env('RAG_EVAL_SUITE', base_path('tests/rag/suite.json')),
         'k' => (int) env('RAG_EVAL_K', 5),
         'thresholds' => [
-            'pass_rate' => 0.90,
-            'recall_at_k' => 0.80,
-            'mrr' => 0.60,
+            'pass_rate' => (float) env('RAG_EVAL_MIN_PASS_RATE', 0.90),
+            'recall_at_k' => (float) env('RAG_EVAL_MIN_RECALL_AT_K', 0.80),
+            'mrr' => (float) env('RAG_EVAL_MIN_MRR', 0.60),
         ],
         'tolerances' => [
             'pass_rate' => 0.0,

@@ -377,7 +377,8 @@ those steps call `vendor/bin/testbench` instead of `php artisan`; the commands a
 flags are identical. A weekly real-model run is described under
 [Testing](#real-model-eval).
 
-Floors live in `config/rag.php`:
+Floors live in `config/rag.php`, and each can be overridden with an environment
+variable (`RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K`, `RAG_EVAL_MIN_MRR`):
 
 ```php
 'thresholds' => [
@@ -610,8 +611,21 @@ workflow, [`eval-real.yml`](.github/workflows/eval-real.yml), runs weekly (Monda
 `nomic-embed-text` (768 dimensions, native mode), and runs the same fixture suite
 against a SQLite file database. It needs no API key and costs nothing.
 
-<!-- TODO(task-12 phase 2): record the real-model numbers and date here once the
-first eval-real run has finished, and set thresholds from them. -->
+On 2026-11-19 the first run, with `ollama:nomic-embed-text:768`, `k=2` and
+200-character chunks with an overlap of 40, scored:
+
+| metric | score | floor |
+|---|---|---|
+| `pass_rate` | 1.000 | 0.95 |
+| `recall_at_k` | 1.000 | 0.95 |
+| `mrr` | 1.000 | 0.95 |
+| `mean_top_score` | 0.769 | n/a |
+
+The floors are each 0.05 below what the first run scored, set through the three
+environment variables above, and the job runs with `--ci`, so it fails when a
+score drops below them. It runs weekly and whenever the workflow file changes.
+The 200/40 chunking is the same as the fake-embedder eval, so the two are
+comparable.
 There is also `tests/verify-standalone.php`, which covers chunking, the fake
 embedder, cosine similarity, pgvector literal formatting and the full eval
 scoring path on bare PHP with no Composer dependencies at all:

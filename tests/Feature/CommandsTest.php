@@ -327,3 +327,37 @@ it('refuses --resize with --collection before changing anything', function (): v
     expect($spy->calls)->toBe(0)
         ->and(Chunk::query()->pluck('embedding_model')->unique()->all())->toBe(['old:model']);
 });
+
+it('gates on the configured thresholds, so a stricter floor fails a passing suite', function (): void {
+    app(Ingestor::class)->ingest('policies/refunds.md', 'Refunds are available within 30 days of delivery.');
+
+    $path = sys_get_temp_dir().'/rag-ci-floor-'.uniqid().'.json';
+    file_put_contents($path, json_encode([
+        'refund' => ['query' => 'refunds within 30 days', 'expected_sources' => ['policies/refunds.md']],
+    ]));
+
+    config(['rag.eval.thresholds.mrr' => 1.1]);
+
+    $this->artisan('rag:eval', ['--suite' => $path, '--ci' => true])
+        ->assertFailed();
+
+    unlink($path);
+});
+
+it('reads the eval floors from RAG_EVAL_MIN_* environment variables', function (): void {
+    $vars = ['RAG_EVAL_MIN_PASS_RATE' => '0.95', 'RAG_EVAL_MIN_RECALL_AT_K' => '0.9', 'RAG_EVAL_MIN_MRR' => '0.85'];
+
+    foreach ($vars as $name => $value) {
+        putenv("{$name}={$value}");
+    }
+
+    try {
+        $config = require __DIR__.'/../../config/rag.php';
+    } finally {
+        foreach (array_keys($vars) as $name) {
+            putenv($name);
+        }
+    }
+
+    expect($config['eval']['thresholds'])->toBe(['pass_rate' => 0.95, 'recall_at_k' => 0.9, 'mrr' => 0.85]);
+});

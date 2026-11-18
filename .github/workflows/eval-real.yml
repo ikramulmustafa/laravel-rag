@@ -33,9 +33,14 @@ jobs:
       RAG_EMBEDDING_DIMENSIONS: 768
       # Native mode: Ollama models take no dimensions parameter.
       RAG_EMBEDDING_SEND_DIMENSIONS: false
-      # Same chunking as the fake-embedder eval, so the two are comparable.
+      # Same chunking as the fake-embedder eval (200/40), so the two are comparable.
       RAG_CHUNK_SIZE: 200
       RAG_CHUNK_OVERLAP: 40
+      # Floors: the first run (2026-11-19, ollama:nomic-embed-text:768) scored 1.0 on
+      # all three, so each floor is that minus 0.05.
+      RAG_EVAL_MIN_PASS_RATE: 0.95
+      RAG_EVAL_MIN_RECALL_AT_K: 0.95
+      RAG_EVAL_MIN_MRR: 0.95
       DB_CONNECTION: sqlite
 
     steps:
@@ -77,9 +82,8 @@ jobs:
           vendor/bin/testbench migrate --force
           vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
 
-      # No --ci yet: the thresholds are set from the first run's numbers, then this
-      # step gains --ci.
+      # --json keeps the metrics in the log; --ci fails the job below the floors.
       - name: Evaluate retrieval with the real model
         env:
           DB_DATABASE: ${{ runner.temp }}/rag.sqlite
-        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --json
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --ci --json
