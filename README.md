@@ -664,7 +664,9 @@ Worth knowing before you adopt this.
 
 **Postgres or nothing, in production.** SQLite and MySQL work, but fall back to computing cosine similarity in PHP, which loads every candidate row into memory. Fine for tests and small corpora. Not fine at scale.
 
-**Filtered search on pgvector before 0.8.** An HNSW index scan stops at `hnsw.ef_search` rows and applies filters afterwards. Each search raises `ef_search` for its own transaction to `min(1000, max(40, limit × 4))`, so a large limit or a rerank pool is filled. On pgvector 0.8 or later, a search with a collection or filters also turns on `hnsw.iterative_scan`, so a small collection still fills its limit. On older versions it can come back with fewer results than exist; upgrade pgvector if you filter on small collections.
+**Filtered search on pgvector before 0.8.** An HNSW index scan stops at `hnsw.ef_search` rows and applies filters afterwards. Each search raises `ef_search` for its own transaction to `min(1000, max(40, limit × 4))`, never below a value your app has already set, so a large limit or a rerank pool is filled. On pgvector 0.8 or later, a search with a collection or filters also turns on `hnsw.iterative_scan`, so a small collection still fills its limit. On older versions it can come back with fewer results than exist; upgrade pgvector if you filter on small collections.
+
+**Each pgvector search runs in a short transaction**, so those settings are `SET LOCAL`. Called inside your own transaction, the search is a savepoint, and Postgres keeps `SET LOCAL` past its release, so the raised `ef_search` (and the iterative scan) last until your transaction ends. With read/write connections, a search uses the write connection, and with `sticky` enabled the request's later reads stay there too.
 
 **Reranking is optional and off by default.** Retrieval is single-stage vector search unless you turn on [reranking](#reranking), which adds one provider call per search.
 

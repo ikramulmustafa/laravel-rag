@@ -29,12 +29,17 @@ final class HnswSearch
     public const ITERATIVE_SCAN_SINCE = '0.8.0';
 
     /**
-     * min(1000, max(40, limit × 4)): four candidates per result leaves room for
-     * the approximate search to miss a few and still fill the limit.
+     * max(current, min(1000, max(40, limit × 4))): four candidates per result
+     * leaves room for the approximate search to miss a few and still fill the
+     * limit, and a value the app has already tuned higher is never lowered.
+     *
+     * @param  int|null  $current  The session's hnsw.ef_search, or null when unknown.
      */
-    public static function efSearchFor(int $limit): int
+    public static function efSearchFor(int $limit, ?int $current = null): int
     {
-        return min(self::MAX_EF_SEARCH, max(self::DEFAULT_EF_SEARCH, $limit * self::CANDIDATES_PER_RESULT));
+        $wanted = min(self::MAX_EF_SEARCH, max(self::DEFAULT_EF_SEARCH, $limit * self::CANDIDATES_PER_RESULT));
+
+        return max($current ?? 0, $wanted);
     }
 
     /** Whether this `pg_extension.extversion` of `vector` has iterative index scans. */

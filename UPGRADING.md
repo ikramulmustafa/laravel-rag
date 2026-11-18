@@ -60,7 +60,7 @@ You did not set `base_url` or `RAG_EMBEDDING_BASE_URL`.
    RAG_EMBEDDING_DIMENSIONS=1536
    ```
 
-   `text-embedding-3-small` and `1536` were 0.2's defaults; if you set other values, keep yours. Do not leave the provider and model unset: 0.3 then uses `ai.default_for_embeddings` and that provider's default embeddings model, which match 0.2 only with the SDK's stock `config/ai.php`. An app that already points `ai.default_for_embeddings` at another provider would send its documents there, and search would throw `MixedEmbeddingModels`. `RAG_EMBEDDING_DRIVER=openai` also still works, as a deprecated alias for `sdk` that defaults the provider to `openai`; it logs one deprecation warning and goes in 1.0.
+   `text-embedding-3-small` and `1536` were 0.2's defaults; if you set other values, keep yours. Ship these in the same deploy as the package upgrade, not after it: 0.2 ignores `RAG_EMBEDDING_PROVIDER`, so setting it early costs nothing, while setting it late leaves a window in which 0.3 embeds with `ai.default_for_embeddings`. Do not leave the provider and model unset: 0.3 then uses `ai.default_for_embeddings` and that provider's default embeddings model, which match 0.2 only with the SDK's stock `config/ai.php`. An app that already points `ai.default_for_embeddings` at another provider would send its documents there, and search would throw `MixedEmbeddingModels`. `RAG_EMBEDDING_DRIVER=openai` also still works, as a deprecated alias for `sdk` that defaults the provider to `openai`; it logs one deprecation warning and goes in 1.0.
 2. Your key stays in `OPENAI_API_KEY`, now read by `config/ai.php` (unless your published config read it from another variable: see Step 0.3). The endpoint is now `ai.providers.openai.url`, which is `OPENAI_URL` (default `https://api.openai.com/v1`). If the app sets `OPENAI_URL` for other SDK or Prism use, embeddings follow it, and the embedding id does not change, so the mixed-model guard will not notice.
 3. Keep the same model and `RAG_EMBEDDING_DIMENSIONS`. Rows written by 0.2 carry an id without the width (`openai:text-embedding-3-small`); 0.3 writes `openai:text-embedding-3-small:1536`, and the two match on read. No reindex and no data migration are needed.
 4. Run the eval and compare with the baseline from Step 0:
@@ -113,7 +113,12 @@ Do these in order, and do each check.
    Both values are in the command's failure list. Then repeat step 3.
 7. Run `php artisan rag:eval` and compare with your baseline.
 
-Optional alternative: if your endpoint is a proxy serving the same OpenAI model, you can keep driver `openai` and set `OPENAI_URL`, which the SDK's `openai` provider reads. That repoints every SDK `openai` call in the app (chat, agents, everything), not only embeddings, and you must still remove `base_url` from `config/rag.php` and `RAG_EMBEDDING_BASE_URL` from `.env`. The embedding id does not change, so see the next section.
+Optional alternative: if your endpoint is a proxy serving the same OpenAI model, you can use the SDK's `openai` provider pointed at it. That repoints every SDK `openai` call in the app (chat, agents, everything), not only embeddings. In this order:
+
+1. Set `OPENAI_URL` to the proxy and `OPENAI_API_KEY` to the proxy's token, plus `RAG_EMBEDDING_PROVIDER=openai` and `RAG_EMBEDDING_DRIVER=sdk` (or keep `openai`, the deprecated alias). Leave `base_url` in place for now: while it is set, the refusal stops anything being sent, so nothing can reach api.openai.com before `OPENAI_URL` is in effect.
+2. Then remove `base_url` from `config/rag.php` and `RAG_EMBEDDING_BASE_URL` from `.env`, clear the config cache and restart workers as in Path B step 4, and check that `php artisan config:show ai.providers.openai.url` shows the proxy URL.
+
+The embedding id does not change (it stays `openai:…`), so no re-embed is needed; see the next section for what that means for the mixed-model guard.
 
 ### Embedding ids, and when to reindex
 

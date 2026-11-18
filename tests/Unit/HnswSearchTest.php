@@ -27,3 +27,13 @@ it('uses iterative scans only from pgvector 0.8.0', function (?string $version, 
     [null, false],
     ['', false],
 ]);
+
+it('never lowers an ef_search the app has tuned higher', function (int $limit, ?int $current, int $expected): void {
+    expect(HnswSearch::efSearchFor($limit, $current))->toBe($expected);
+})->with([
+    'tuned above what the limit needs' => [5, 200, 200],
+    'tuned above, large limit wins' => [100, 200, 400],
+    'at the default' => [60, 40, 240],
+    'tuned below the default' => [5, 10, 40],
+    'unknown' => [60, null, 240],
+]);

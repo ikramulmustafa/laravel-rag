@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Repo: `d:/laragon/www/laravel-rag`, branch `feat/laravel-ai-sdk`. Never commit to `main`.
+- Branch `feat/laravel-ai-sdk`. Never commit to `main`.
 - `composer.json` require: `php ^8.3`, `laravel/ai ^1.4`, `illuminate/{console,database,http,support,validation} ^12.62|^13.15`, `symfony/finder ^7.0|^8.0`.
 - Every PHP file starts with `declare(strict_types=1);`; every class in `src/` is `final` (except contracts).
 - Every task ends green on: `vendor/bin/pest`, `vendor/bin/phpstan analyse --no-progress`, `vendor/bin/pint --test`, `php tests/verify-standalone.php`. (This repo **is** pint-clean; running `vendor/bin/pint` on it is safe.)
@@ -19,7 +19,7 @@
 - Tool output, exception messages that may reach an LLM, and `EmbeddingFailed` messages never contain HTTP bodies, stack traces or raw exception messages from providers.
 - Commit messages: a plain sentence in the author's style (e.g. "Store the source text so reindex works for database content"). **No `Co-Authored-By`, no "Generated with" lines, no `feat:` prefixes.** Stage explicit paths only.
 - New migration files: `database/migrations/2026_11_19_000000_add_content_and_eval_config.php`. Do not edit the meaning of the 2026_01_01 migration except the two changes named in Tasks 2 and 9.
-- Postgres-only behaviour is tested in the `pgsql` Pest group (`->group('pgsql')`), skipped unless `DB_CONNECTION=pgsql`; the CI pgvector job runs it. No local Postgres exists — never point tests at the user's pgAdmin server (it is the production n8n database).
+- Postgres-only behaviour is tested in the `pgsql` Pest group (`->group('pgsql')`), skipped unless `DB_CONNECTION=pgsql`; the CI pgvector job runs it. No local Postgres; Postgres-only tests run in CI.
 
 ## Review Focus
 

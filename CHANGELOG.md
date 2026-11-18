@@ -45,7 +45,7 @@ such change will be listed here under **Changed** with an upgrade note.
 - Vector widths are checked on ingest and retrieval instead of being trusted.
 - Reindex works for content ingested from a database and no longer blanks hashes before ingesting; a failure on one document no longer aborts the run.
 - The migration no longer fails on a vector wider than pgvector's HNSW limit of 2000; it leaves the column unindexed.
-- pgvector searches are no longer cut off at `hnsw.ef_search` (40 rows): each search raises it to fit its limit, and filtered searches use iterative index scans on pgvector 0.8 or later.
+- pgvector searches are no longer cut off at `hnsw.ef_search` (40 rows): each search raises it to fit its limit (never below a value the app set), and filtered searches use iterative index scans on pgvector 0.8 or later. Each search runs in a short transaction for this, so with read/write connections it uses the write connection, and `sticky` keeps that request's later reads there.
 - `rag:reindex` reads each document just before re-embedding it and no longer overwrites a revision the app ingested meanwhile.
 - A vector holding NaN or infinity is refused before anything is stored.
 

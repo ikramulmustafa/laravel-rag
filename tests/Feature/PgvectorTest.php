@@ -363,3 +363,17 @@ it('does not ask for an iterative scan without filters', function (): void {
     expect($sql)->toContain('SET LOCAL hnsw.ef_search = 40')
         ->and($sql)->not->toContain('SET LOCAL hnsw.iterative_scan = relaxed_order');
 })->group('pgsql');
+
+it('keeps an ef_search the app tuned higher than the limit needs', function (): void {
+    DB::statement('SET hnsw.ef_search = 200');
+    DB::enableQueryLog();
+
+    app(Retriever::class)->retrieve('refund for damaged goods', 3);
+
+    $sql = array_column(DB::getQueryLog(), 'query');
+
+    expect($sql)->toContain('SET LOCAL hnsw.ef_search = 200')
+        ->and($sql)->not->toContain('SET LOCAL hnsw.ef_search = 40')
+        // SET LOCAL ended with the search's transaction; the app's value is untouched.
+        ->and(DB::scalar('SHOW hnsw.ef_search'))->toBe('200');
+})->group('pgsql');

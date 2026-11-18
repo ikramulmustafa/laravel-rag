@@ -192,9 +192,11 @@ final class VectorRetriever implements Retriever
     }
 
     /**
-     * In a transaction of its own so the index settings are SET LOCAL: they last
-     * for this query only and never leak into the app's session on that
-     * connection. See HnswSearch for why they are needed.
+     * In a transaction so the index settings can be SET LOCAL: they end with it
+     * rather than staying on the connection. Inside an app's own transaction this
+     * one is a savepoint, and Postgres keeps SET LOCAL past RELEASE SAVEPOINT, so
+     * the settings then last until that outer transaction ends. See HnswSearch for
+     * why they are needed.
      *
      * @param  list<float>  $vector
      * @param  array<string, mixed>  $filters
@@ -203,8 +205,9 @@ final class VectorRetriever implements Retriever
     private function searchWithPgvector(array $vector, int $limit, array $filters): array
     {
         return $this->connection->transaction(function () use ($vector, $limit, $filters): array {
-            // ef_search = min(1000, max(40, limit × 4)). An integer computed here, not input.
-            $this->connection->statement('SET LOCAL hnsw.ef_search = '.HnswSearch::efSearchFor($limit));
+            // ef_search = max(current, min(1000, max(40, limit × 4))), so a value the
+            // app tuned higher is kept. An integer computed here, not input.
+            $this->connection->statement('SET LOCAL hnsw.ef_search = '.HnswSearch::efSearchFor($limit, $this->currentEfSearch()));
 
             // Filters cut the scan's rows after the fact, so let the index keep
             // scanning until the limit is met. Only where pgvector has the setting
@@ -239,6 +242,18 @@ final class VectorRetriever implements Retriever
 
             return $rows;
         });
+    }
+
+    /**
+     * The session's hnsw.ef_search. missing_ok, because the setting does not exist
+     * until pgvector is loaded in this session, and an error would abort the
+     * transaction.
+     */
+    private function currentEfSearch(): ?int
+    {
+        $value = $this->connection->scalar("SELECT current_setting('hnsw.ef_search', true)");
+
+        return is_numeric($value) ? (int) $value : null;
     }
 
     private function pgvectorVersion(): ?string

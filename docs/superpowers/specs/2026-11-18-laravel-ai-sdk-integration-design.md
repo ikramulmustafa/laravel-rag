@@ -29,12 +29,12 @@ These are explicitly deferred to v0.4 or later:
 - Hybrid/BM25 search and RRF.
 - An MCP server via `laravel/mcp`.
 - "Always-retrieve" agent middleware.
-- Answer-level / LLM-judge evals. These are where the author's Anthropic credits fit, since Anthropic has no embeddings API.
+- Answer-level / LLM-judge evals. These are where a chat-only provider such as Anthropic fits, since it has no embeddings API.
 - `halfvec` for vectors wider than 2000 dimensions on pgvector.
 - MySQL 9's native `VECTOR` type.
 - Laravel's built-in vector query methods (`whereVectorSimilarTo` etc.).
 - Filament UI, streaming, and per-chunk metadata such as headings and offsets.
-- Dogfooding on the portfolio site. That needs a framework upgrade to 12.62 or later plus PHP 8.3 on prod, so it is a separate task.
+- Dogfooding on the portfolio site. That needs the site on Laravel 12.62 or later and PHP 8.3, so it is a separate task.
 
 ## 4. Anti-goals
 
@@ -315,7 +315,7 @@ Where the build differs from the text above, these rulings win.
 - R2: `eval-real` lives in its own workflow file, `.github/workflows/eval-real.yml`, triggered by `schedule`, `workflow_dispatch` and `pull_request` filtered to that file, so `ci.yml` triggers are unchanged.
 - R3: `EmbeddingModelId::matches` follows 6.3 literally (a stored id with a `:<int>` suffix never matches by suffix removal), a limit below 1 throws, and blank detection covers Unicode whitespace.
 - R4: The deprecated `openai` alias fails closed with `InvalidArgumentException` when `base_url` is set to anything but the OpenAI default; 6.2 said it would only warn.
-- R5: CI runs only on push to `main` and on pull requests, so the controller pushes the branch and opens a draft PR to validate the pgvector job.
+- R5: CI runs only on push to `main` and on pull requests, so the branch is pushed and a draft PR opened so CI can run the Postgres tests; nothing is merged without the author.
 - R6: `--resize` clears vectors with `DROP COLUMN` plus `ADD COLUMN`, not `ALTER COLUMN TYPE ... USING NULL`, to avoid a full table rewrite under an exclusive lock.
 - R7: Rerank `candidates` must be 1..10 and the pool sent to the reranker is capped at 100.
 - R8: The tool shortens its echoed query to stay within `maxChars`; superseded by R8b.
