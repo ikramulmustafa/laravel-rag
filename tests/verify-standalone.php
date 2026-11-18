@@ -198,6 +198,10 @@ check('legacy stored id matches the current id', fn () => EmbeddingModelId::matc
 check('identical ids match', fn () => EmbeddingModelId::matches('openai:x:1536', 'openai:x:1536'));
 check('another width does not match', fn () => ! EmbeddingModelId::matches('openai:x:768', 'openai:x:1536'));
 check('full stored id does not match a suffix-less current id', fn () => ! EmbeddingModelId::matches('openai:x:1536', 'openai:x'));
+check('stored id with its own width is never legacy', fn () => ! EmbeddingModelId::matches('drv:foo:768', 'drv:foo:768:1536'));
+check('suffix-less stored id is legacy', fn () => EmbeddingModelId::matches('drv:foo', 'drv:foo:1536'));
+check('accepted ids include the legacy form', fn () => EmbeddingModelId::accepted('openai:x:1536') === ['openai:x:1536', 'openai:x']);
+check('accepted ids skip a legacy form that has a width', fn () => EmbeddingModelId::accepted('drv:foo:768:1536') === ['drv:foo:768:1536']);
 
 echo "\npgvector literal formatting\n";
 

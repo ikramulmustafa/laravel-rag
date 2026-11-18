@@ -29,7 +29,8 @@ final class VectorRetriever implements Retriever
     {
         // Nothing to search for. Embedding whitespace costs a request and returns a
         // vector that is close to nothing in particular, so answer empty instead.
-        if (trim($query) === '') {
+        // \p{Z} covers the Unicode spaces trim() misses, such as U+00A0 and U+3000.
+        if (preg_match('/^[\s\p{Z}]*$/u', $query) === 1) {
             return new RetrievalResult(
                 query: $query,
                 citations: [],
@@ -38,6 +39,13 @@ final class VectorRetriever implements Retriever
         }
 
         $limit ??= $this->defaultLimit;
+
+        // The query builder ignores a negative limit, so the pgvector path would
+        // return every row, while array_slice() with a negative length quietly drops
+        // rows from the end. Neither is a request anyone means to make.
+        if ($limit < 1) {
+            throw new InvalidArgumentException("Retrieval limit must be at least 1, got {$limit}.");
+        }
 
         $this->guardAgainstMixedModels($filters);
 
@@ -90,7 +98,7 @@ final class VectorRetriever implements Retriever
     private function guardAgainstMixedModels(array $filters): void
     {
         $current = $this->embedder->modelId();
-        $accepted = array_values(array_filter([$current, EmbeddingModelId::legacyForm($current)]));
+        $accepted = EmbeddingModelId::accepted($current);
 
         $offending = $this->scopedChunks($filters)->whereNotIn('c.embedding_model', $accepted);
 

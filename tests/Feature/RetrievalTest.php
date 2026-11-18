@@ -214,9 +214,17 @@ it('returns an empty result for a blank query without embedding', function (): v
     });
 
     $result = Rag::retrieve("   \n\t");
+    $unicode = Rag::retrieve("\u{00A0}\u{3000}");
 
     expect($result->isEmpty())->toBeTrue()
-        ->and($result->embeddingModel)->toBe('fake:deterministic-hash:64');
+        ->and($result->embeddingModel)->toBe('fake:deterministic-hash:64')
+        ->and($unicode->isEmpty())->toBeTrue();
+});
+
+it('answers a blank query before checking the corpus for mixed models', function (): void {
+    DB::table('rag_chunks')->limit(1)->update(['embedding_model' => 'other:model:64']);
+
+    expect(Rag::retrieve('   ')->isEmpty())->toBeTrue();
 });
 
 it('uses retrieval.default_limit when no limit is given', function (): void {
@@ -235,4 +243,48 @@ it('uses retrieval.default_limit when no limit is given', function (): void {
 it('rejects filter keys that are not plain identifiers', function (): void {
     expect(fn () => Rag::retrieve('x', null, ['a->b' => 1]))
         ->toThrow(InvalidArgumentException::class);
+});
+
+it('rejects a limit below one', function (): void {
+    expect(fn () => Rag::retrieve('refund', 0))
+        ->toThrow(InvalidArgumentException::class, 'Retrieval limit must be at least 1, got 0.');
+});
+
+it('rejects a configured default limit below one', function (): void {
+    config()->set('rag.retrieval.default_limit', 0);
+    app()->forgetInstance(Retriever::class);
+    app()->forgetInstance('rag');
+    Rag::clearResolvedInstance('rag');
+
+    expect(fn () => Rag::retrieve('refund'))
+        ->toThrow(InvalidArgumentException::class, 'Retrieval limit must be at least 1, got 0.');
+});
+
+it('does not take a stored full id for a legacy one in the mixed-model guard', function (): void {
+    useRetrievalEmbedder(new class implements Embedder
+    {
+        public function embed(array $texts): array
+        {
+            return (new FakeEmbedder(64))->embed($texts);
+        }
+
+        public function modelId(): string
+        {
+            return 'drv:foo:768:64';
+        }
+
+        public function dimensions(): int
+        {
+            return 64;
+        }
+
+        public function estimateTokens(array $texts): int
+        {
+            return 0;
+        }
+    });
+
+    DB::table('rag_chunks')->update(['embedding_model' => 'drv:foo:768']);
+
+    expect(fn () => Rag::retrieve('refund'))->toThrow(MixedEmbeddingModels::class, 'drv:foo:768');
 });

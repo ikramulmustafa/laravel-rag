@@ -42,9 +42,27 @@ final class EmbeddingModelId
      * identified by `$current`. Deliberately one-directional: a full stored id is
      * never matched against a suffix-less current one, because then nothing says
      * the stored width is the one in use.
+     *
+     * A stored id only counts as legacy when it has no width suffix of its own.
+     * `drv:foo:768` is the full id of `foo` at 768, not a legacy id of a model
+     * named `foo:768`, so it never matches `drv:foo:768:1536`.
      */
     public static function matches(string $stored, string $current): bool
     {
-        return $stored === $current || $stored === self::legacyForm($current);
+        return $stored === $current
+            || (self::legacyForm($stored) === null && $stored === self::legacyForm($current));
+    }
+
+    /**
+     * Every stored id that matches `$current`, for a `WHERE ... IN` that has to
+     * agree with matches().
+     *
+     * @return list<string>
+     */
+    public static function accepted(string $current): array
+    {
+        $legacy = self::legacyForm($current);
+
+        return $legacy !== null && self::matches($legacy, $current) ? [$current, $legacy] : [$current];
     }
 }
