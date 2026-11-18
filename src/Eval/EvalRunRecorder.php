@@ -41,6 +41,7 @@ final class EvalRunRecorder
                 static fn (float $v): float => round($v, 4),
                 $report->metrics,
             )),
+            'config' => $report->config === [] ? null : json_encode($report->config),
             'failures' => $failures === [] ? null : json_encode($failures),
             'git_sha' => $commitSha,
             'created_at' => $now,

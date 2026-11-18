@@ -23,6 +23,7 @@ final class EvalReport implements JsonSerializable
     /**
      * @param  list<CaseResult>  $results
      * @param  array<string, float>  $metrics
+     * @param  array<string, mixed>  $config  What the run was configured with; empty on a baseline that predates recording
      */
     public function __construct(
         public readonly string $suite,
@@ -30,7 +31,19 @@ final class EvalReport implements JsonSerializable
         public readonly array $metrics,
         public readonly int $k,
         public readonly string $embeddingModel = '',
+        public readonly array $config = [],
     ) {}
+
+    /**
+     * A copy carrying the run's configuration. The suite does not know it (it only
+     * sees a Retriever), so the command attaches it afterwards.
+     *
+     * @param  array<string, mixed>  $config
+     */
+    public function withConfig(array $config): self
+    {
+        return new self($this->suite, $this->results, $this->metrics, $this->k, $this->embeddingModel, $config);
+    }
 
     /**
      * Rebuild a report from a saved `--json` run, for use as the right-hand side of
@@ -63,6 +76,7 @@ final class EvalReport implements JsonSerializable
             metrics: $metrics,
             k: (int) ($decoded['k'] ?? 0),
             embeddingModel: (string) ($decoded['embedding_model'] ?? ''),
+            config: is_array($decoded['config'] ?? null) ? $decoded['config'] : [],
         );
     }
 
@@ -166,6 +180,7 @@ final class EvalReport implements JsonSerializable
             'suite' => $this->suite,
             'k' => $this->k,
             'embedding_model' => $this->embeddingModel,
+            'config' => $this->config,
             'total_cases' => count($this->results),
             'passed' => count($this->results) - count($this->failures()),
             'metrics' => array_map(
