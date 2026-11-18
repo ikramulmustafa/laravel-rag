@@ -64,7 +64,7 @@ final class ReindexCommand extends Command
             return self::FAILURE;
         }
 
-        /** @var array<string, string> $failed source => reason */
+        /** @var list<string> $failed one line per document: collection, source, reason */
         $failed = [];
 
         $bar = $this->output->createProgressBar($total);
@@ -93,7 +93,8 @@ final class ReindexCommand extends Command
                         force: true,
                     );
                 } catch (Throwable $e) {
-                    $failed[$document->source] = class_basename($e).': '.$e->getMessage();
+                    // A list, not keyed by source: the same source can exist in two collections.
+                    $failed[] = "{$document->collection}/{$document->source} — ".class_basename($e).': '.$e->getMessage();
                 }
 
                 $bar->advance();
@@ -106,8 +107,8 @@ final class ReindexCommand extends Command
         if ($failed !== []) {
             $this->components->error(count($failed).' document(s) could not be reindexed:');
 
-            foreach ($failed as $source => $reason) {
-                $this->line("  <fg=red>✗</> {$source} <fg=gray>({$reason})</>");
+            foreach ($failed as $line) {
+                $this->line("  <fg=red>✗</> {$line}");
             }
 
             $this->line('');

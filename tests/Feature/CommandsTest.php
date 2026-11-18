@@ -238,6 +238,7 @@ it('does not blank the hash when reindexing fails', function (): void {
     app(Ingestor::class)->ingest('db:1', 'Refunds are available within 30 days of delivery.');
 
     $hash = Document::firstOrFail()->content_hash;
+    $chunksBefore = Chunk::query()->orderBy('id')->get(['id', 'embedding_model'])->toArray();
 
     $spy = useSpyEmbedder();
     $spy->fail = true;
@@ -246,5 +247,51 @@ it('does not blank the hash when reindexing fails', function (): void {
         ->expectsOutputToContain('embedding provider unavailable')
         ->assertFailed();
 
-    expect(Document::firstOrFail()->content_hash)->toBe($hash);
+    expect(Document::firstOrFail()->content_hash)->toBe($hash)
+        ->and(Chunk::query()->orderBy('id')->get(['id', 'embedding_model'])->toArray())->toBe($chunksBefore);
+});
+
+it('does not reindex chunks that carry the legacy form of the current model id with --stale', function (): void {
+    app(Ingestor::class)->ingest('db:1', 'Refunds are available within 30 days of delivery.');
+
+    Chunk::query()->update(['embedding_model' => 'fake:deterministic-hash']);
+
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--stale' => true])
+        ->expectsOutputToContain('No stale documents')
+        ->assertSuccessful();
+
+    expect($spy->calls)->toBe(0);
+});
+
+it('reindexes a document with a null embedding with --stale', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('db:fresh', 'Shipping takes three to five working days.');
+    $ingestor->ingest('db:empty', 'Refunds are available within 30 days of delivery.');
+
+    $empty = Document::where('source', 'db:empty')->firstOrFail();
+    Chunk::where('document_id', $empty->id)->update(['embedding' => null]);
+
+    $spy = useSpyEmbedder();
+
+    $this->artisan('rag:reindex', ['--stale' => true, '--force' => true])->assertSuccessful();
+
+    expect($spy->calls)->toBe(1)
+        ->and(Chunk::where('document_id', $empty->id)->whereNull('embedding')->count())->toBe(0);
+});
+
+it('reports every failed document even when two collections share a source', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('docs/refunds.md', 'Refunds within 30 days.', collection: 'a');
+    $ingestor->ingest('docs/refunds.md', 'Refunds within 30 days.', collection: 'b');
+
+    $spy = useSpyEmbedder();
+    $spy->fail = true;
+
+    $this->artisan('rag:reindex', ['--force' => true])
+        ->expectsOutputToContain('2 document(s) could not be reindexed')
+        ->expectsOutputToContain('a/docs/refunds.md')
+        ->expectsOutputToContain('b/docs/refunds.md')
+        ->assertFailed();
 });
