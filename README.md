@@ -51,6 +51,8 @@ Upgrading from 0.2? Read [UPGRADING.md](UPGRADING.md).
 
 ### Choose an embedding provider
 
+If you published `config/rag.php` under 0.2, it needs the 0.3 keys before any of the variables below do anything. See [UPGRADING.md](UPGRADING.md#a-published-configrag-php).
+
 Credentials and endpoints live in `config/ai.php`, which is the SDK's file. This package only says which provider and model to use:
 
 ```env
@@ -179,13 +181,13 @@ It returns compact JSON the model can quote from:
 - `score` is the vector similarity. With reranking on, each citation also carries `rerank_score`.
 - When the output would exceed `maxChars`, the echoed query is capped at 200 characters first, then the lowest-ranked citations are dropped, then the last passage is trimmed at a word boundary, and the echoed query is shortened further if that is still not enough. `truncated` is `true` whenever anything was cut.
 - With no results the tool returns `count: 0`, an empty `citations` list and a note saying nothing relevant was found.
-- Errors never reach the model. A failed search returns a fixed message telling it to answer without the knowledge base, and the exception goes to Laravel's exception reporter.
+- Search failures never reach the model. A failed search returns a fixed message telling it to answer without the knowledge base, and the exception goes to Laravel's exception reporter. Argument validation messages (a missing `query`, a `limit` out of range) are returned to the model, so it can correct the call.
 
 Retrieved passages are document content, not instructions. The default tool description tells the model so, but a description is not a barrier. Treat everything the tool returns as untrusted input, and see [SECURITY.md](SECURITY.md).
 
 ### Reranking
 
-Reranking is off by default. When on, the retriever fetches `limit * candidates` chunks by vector similarity and asks an SDK reranking model to pick the best `limit`:
+Reranking is off by default. A `config/rag.php` published under 0.2 has no `retrieval.rerank` block until you [re-publish it](UPGRADING.md#a-published-configrag-php). When on, the retriever fetches `limit * candidates` chunks by vector similarity and asks an SDK reranking model to pick the best `limit`:
 
 ```env
 RAG_RERANK=true
@@ -208,12 +210,13 @@ The SDK ships a `SimilaritySearch` tool: you point it at an Eloquent model and a
 
 | | `SimilaritySearch` (SDK) | `laravel-rag` |
 |---|---|---|
-| Databases | pgvector; throws on MySQL and SQLite | pgvector in production; SQLite and MySQL compute cosine in PHP |
+| Databases | `usingModel()` runs `whereVectorSimilarTo()`, which needs a database with vector support: Postgres (pgvector), and MariaDB on recent Laravel 13 releases (checked against framework 13.43; Laravel 12 was not checked). It throws on MySQL and SQLite. `new SimilaritySearch(using: fn ...)` can wrap any store you query yourself | pgvector in production; SQLite and MySQL compute cosine in PHP |
 | Scores | A `minSimilarity` cutoff, but the score is not returned | Every citation carries its similarity score; `min_score` drops weak matches |
 | Citations | The matching rows, minus the vector column | Chunk, source, position and score on every result |
 | Chunking and ingestion | None: you bring a table that already holds vectors | `rag:ingest` chunks, hashes, embeds and stores; unchanged documents are skipped |
 | Evals | None | `rag:eval` scores recall, MRR and pass rate, and `--ci` fails the build |
-| Provider for query embedding | The query is embedded with the SDK's default embeddings provider; nothing records which model made the stored vectors | The embedding model id is stored on every chunk, and a search with a different model throws |
+| Provider for query embedding | The query is embedded with the SDK's default embeddings provider; nothing records which model made the stored vectors | The embedding model id (driver, model and width) is stored on every chunk, and a search against a corpus embedded with a different one throws |
+
 They are not exclusive. `Rag::tool()` is an SDK tool, so it sits in the same `tools()` list.
 
 ---
@@ -285,9 +288,12 @@ An eval suite is a JSON file of questions with known-good answer locations:
 ```
 
 Every terminal sample below is real output from this repository's own fixture
-suite, which you can reproduce after cloning:
+suite, which you can reproduce after cloning (the fake embedder, a SQLite file
+and the default 1000-character chunks; the CI run later on uses 200/40):
 
 ```
+$ export RAG_EMBEDDING_DRIVER=fake RAG_EMBEDDING_DIMENSIONS=64 DB_CONNECTION=sqlite DB_DATABASE=/tmp/rag.sqlite
+$ touch /tmp/rag.sqlite && vendor/bin/testbench migrate --force
 $ vendor/bin/testbench rag:ingest tests/Fixtures/corpus --force
 $ vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=4
 
@@ -378,7 +384,7 @@ flags are identical. A weekly real-model run is described under
 [Testing](#real-model-eval).
 
 Floors live in `config/rag.php`, and each can be overridden with an environment
-variable (`RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K`, `RAG_EVAL_MIN_MRR`):
+variable (`RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K`, `RAG_EVAL_MIN_MRR`; empty values are ignored, and a config published under 0.2 needs the new keys first):
 
 ```php
 'thresholds' => [
@@ -478,6 +484,7 @@ Ikram\Rag\Exceptions\MixedEmbeddingModels
 The id is `{driver}:{model}:{dimensions}`. Ids written by 0.2 have no width
 suffix, and they still match the same model at the same width, so upgrading does
 not force a reindex.
+
 The check runs on every `retrieve()` call, scoped to the collection and filters being searched, before the query is embedded, so it
 fails on the first search after a mismatched model swap rather than at some
 later point that happens to notice. A hard failure there beats plausible
@@ -553,7 +560,7 @@ suite committed on Linux still matches a corpus ingested on Windows.
 
 ## Configuration
 
-Every setting is documented inline in `config/rag.php`. The two worth knowing:
+Every setting is documented inline in `config/rag.php`. The ones worth knowing:
 
 **`chunking.size` and `chunking.overlap`** — do not tune these by intuition.
 Change one, run `rag:reindex`, run `rag:eval`, and keep the change only if the
@@ -564,9 +571,10 @@ skips documents whose content hash is unchanged, and a chunking change does not
 change any document's content — so `rag:ingest` after a chunk-size edit reports
 everything as unchanged and skipped, leaves the old chunks in place, and the eval
 that follows scores the configuration you were trying to replace. `rag:reindex`
-clears the hashes and rebuilds, which is what actually applies the change.
+re-ingests every stored document with `force`, ignoring the hash, which is what
+actually applies the change.
 
-**`embedding.*`** — provider, model, width and batching; see [Choose an embedding provider](#choose-an-embedding-provider). A provider or model change at the same width needs `rag:reindex --stale`.
+**`embedding.*`** — provider, model, width and batching; see [Choose an embedding provider](#choose-an-embedding-provider). A change of provider or model name needs `rag:reindex --stale`. The id records the provider's driver, not its config key, so two endpoints with the same driver and model name share an id; after swapping one for the other use `rag:reindex --force`.
 
 **`retrieval.default_limit`** is used whenever no limit is passed. A limit below 1 throws, and a blank query returns an empty result without calling the embedding provider. Filter keys must match `/^[A-Za-z0-9_]+$/`.
 
@@ -626,6 +634,7 @@ environment variables above, and the job runs with `--ci`, so it fails when a
 score drops below them. It runs weekly and whenever the workflow file changes.
 The 200/40 chunking is the same as the fake-embedder eval, so the two are
 comparable.
+
 There is also `tests/verify-standalone.php`, which covers chunking, the fake
 embedder, cosine similarity, pgvector literal formatting and the full eval
 scoring path on bare PHP with no Composer dependencies at all:

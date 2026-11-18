@@ -59,7 +59,11 @@ jobs:
 
       - name: Start Ollama
         run: |
-          nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          # The install script registers Ollama as a service and may already have
+          # started it, so only start a second server if nothing is answering.
+          if ! curl -fsS http://127.0.0.1:11434 > /dev/null 2>&1; then
+            nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          fi
           for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:11434 > /dev/null 2>&1; then
               echo "ollama is up after ${i} checks"
@@ -68,7 +72,8 @@ jobs:
             sleep 2
           done
           echo "ollama did not answer on 127.0.0.1:11434 within 120 seconds" >&2
-          cat "$RUNNER_TEMP/ollama.log" >&2
+          cat "$RUNNER_TEMP/ollama.log" >&2 || true
+          journalctl -u ollama --no-pager -n 50 >&2 || true
           exit 1
 
       - run: ollama pull nomic-embed-text

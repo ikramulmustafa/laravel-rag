@@ -49,10 +49,10 @@ return [
         'timeout' => (int) env('RAG_EMBEDDING_TIMEOUT', 30),
         'cache' => (bool) env('RAG_EMBEDDING_CACHE', false),
 
-        // Deprecated, and not used to send anything. It exists only so the package
-        // can refuse a custom endpoint left over from 0.2, instead of quietly
-        // sending that endpoint's documents and token to OpenAI. Move to an
-        // "openai-compatible" provider in config/ai.php, then remove this.
+        // Deprecated, and not used to send anything. It exists only so the
+        // package can refuse a custom endpoint left over from 0.2, instead of
+        // quietly sending that endpoint's documents and token to OpenAI. Move
+        // to an "openai-compatible" provider in config/ai.php, then remove this.
         'base_url' => env('RAG_EMBEDDING_BASE_URL'),
     ],
 
@@ -123,7 +123,9 @@ return [
     | Thresholds are enforced by `rag:eval --ci`, which exits non-zero when any
     | metric falls below its floor. Each can be overridden per environment with
     | RAG_EVAL_MIN_PASS_RATE, RAG_EVAL_MIN_RECALL_AT_K and RAG_EVAL_MIN_MRR, which
-    | is how a real embedding model gets higher floors than the hashed fake one. Wire that into CI and retrieval regressions
+    | is how a real embedding model gets higher floors than the hashed fake one.
+    | An empty value is ignored rather than read as 0.0, which would switch the
+    | floor off. Wire that into CI and retrieval regressions
     | fail the build instead of reaching production silently.
     |
     | `tolerances` applies only when `--baseline` names a previous run. Thresholds
@@ -137,9 +139,9 @@ return [
         'suite_path' => env('RAG_EVAL_SUITE', base_path('tests/rag/suite.json')),
         'k' => (int) env('RAG_EVAL_K', 5),
         'thresholds' => [
-            'pass_rate' => (float) env('RAG_EVAL_MIN_PASS_RATE', 0.90),
-            'recall_at_k' => (float) env('RAG_EVAL_MIN_RECALL_AT_K', 0.80),
-            'mrr' => (float) env('RAG_EVAL_MIN_MRR', 0.60),
+            'pass_rate' => in_array(env('RAG_EVAL_MIN_PASS_RATE'), [null, ''], true) ? 0.90 : (float) env('RAG_EVAL_MIN_PASS_RATE'),
+            'recall_at_k' => in_array(env('RAG_EVAL_MIN_RECALL_AT_K'), [null, ''], true) ? 0.80 : (float) env('RAG_EVAL_MIN_RECALL_AT_K'),
+            'mrr' => in_array(env('RAG_EVAL_MIN_MRR'), [null, ''], true) ? 0.60 : (float) env('RAG_EVAL_MIN_MRR'),
         ],
         'tolerances' => [
             'pass_rate' => 0.0,

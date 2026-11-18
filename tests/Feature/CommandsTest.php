@@ -328,7 +328,51 @@ it('refuses --resize with --collection before changing anything', function (): v
         ->and(Chunk::query()->pluck('embedding_model')->unique()->all())->toBe(['old:model']);
 });
 
-it('gates on the configured thresholds, so a stricter floor fails a passing suite', function (): void {
+/**
+ * Load config/rag.php with the given environment variables in place, restoring
+ * whatever was there before in every place Laravel's env() can read it from.
+ *
+ * @param  array<string, string|null>  $vars
+ * @return array<string, mixed>
+ */
+function ragConfigWithEnv(array $vars): array
+{
+    $saved = [];
+
+    foreach ($vars as $name => $value) {
+        $saved[$name] = [getenv($name), $_SERVER[$name] ?? null, $_ENV[$name] ?? null];
+
+        if ($value === null) {
+            putenv($name);
+            unset($_SERVER[$name], $_ENV[$name]);
+        } else {
+            putenv("{$name}={$value}");
+            $_SERVER[$name] = $_ENV[$name] = $value;
+        }
+    }
+
+    try {
+        return require __DIR__.'/../../config/rag.php';
+    } finally {
+        foreach ($saved as $name => [$env, $server, $envVar]) {
+            $env === false ? putenv($name) : putenv("{$name}={$env}");
+
+            if ($server === null) {
+                unset($_SERVER[$name]);
+            } else {
+                $_SERVER[$name] = $server;
+            }
+
+            if ($envVar === null) {
+                unset($_ENV[$name]);
+            } else {
+                $_ENV[$name] = $envVar;
+            }
+        }
+    }
+}
+
+it('gates on the configured thresholds, so a stricter floor fails a suite that passes at the defaults', function (): void {
     app(Ingestor::class)->ingest('policies/refunds.md', 'Refunds are available within 30 days of delivery.');
 
     $path = sys_get_temp_dir().'/rag-ci-floor-'.uniqid().'.json';
@@ -336,28 +380,36 @@ it('gates on the configured thresholds, so a stricter floor fails a passing suit
         'refund' => ['query' => 'refunds within 30 days', 'expected_sources' => ['policies/refunds.md']],
     ]));
 
-    config(['rag.eval.thresholds.mrr' => 1.1]);
+    try {
+        // Control: the same suite clears the default floors.
+        $this->artisan('rag:eval', ['--suite' => $path, '--ci' => true, '--no-record' => true])
+            ->assertSuccessful();
 
-    $this->artisan('rag:eval', ['--suite' => $path, '--ci' => true])
-        ->assertFailed();
+        config(['rag.eval.thresholds.mrr' => 1.1]);
 
-    unlink($path);
+        $this->artisan('rag:eval', ['--suite' => $path, '--ci' => true, '--no-record' => true])
+            ->assertFailed();
+    } finally {
+        unlink($path);
+    }
 });
 
 it('reads the eval floors from RAG_EVAL_MIN_* environment variables', function (): void {
-    $vars = ['RAG_EVAL_MIN_PASS_RATE' => '0.95', 'RAG_EVAL_MIN_RECALL_AT_K' => '0.9', 'RAG_EVAL_MIN_MRR' => '0.85'];
-
-    foreach ($vars as $name => $value) {
-        putenv("{$name}={$value}");
-    }
-
-    try {
-        $config = require __DIR__.'/../../config/rag.php';
-    } finally {
-        foreach (array_keys($vars) as $name) {
-            putenv($name);
-        }
-    }
+    $config = ragConfigWithEnv([
+        'RAG_EVAL_MIN_PASS_RATE' => '0.95',
+        'RAG_EVAL_MIN_RECALL_AT_K' => '0.9',
+        'RAG_EVAL_MIN_MRR' => '0.85',
+    ]);
 
     expect($config['eval']['thresholds'])->toBe(['pass_rate' => 0.95, 'recall_at_k' => 0.9, 'mrr' => 0.85]);
+});
+
+it('keeps the default floors when a RAG_EVAL_MIN_* variable is empty or unset', function (): void {
+    $config = ragConfigWithEnv([
+        'RAG_EVAL_MIN_PASS_RATE' => '',
+        'RAG_EVAL_MIN_RECALL_AT_K' => null,
+        'RAG_EVAL_MIN_MRR' => '',
+    ]);
+
+    expect($config['eval']['thresholds'])->toBe(['pass_rate' => 0.90, 'recall_at_k' => 0.80, 'mrr' => 0.60]);
 });

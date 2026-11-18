@@ -40,7 +40,7 @@ later. Treat an ingestion path that accepts user-supplied documents as an indire
 prompt-injection surface, and do not ingest secrets you would not want quoted back.
 
 **Embedding calls leave your infrastructure.** Chunk text and queries are sent to
-the provider named by `rag.embedding.provider`, at the endpoint set for it in
+the provider named by `rag.embedding.provider` (or `ai.default_for_embeddings` when that is unset), at the endpoint set for it in
 `config/ai.php` (a local Ollama server keeps them on your machine). Reranking, if
 enabled, sends retrieved passages to its provider too. Whether that is acceptable
 is a decision about your data, not about this package.
