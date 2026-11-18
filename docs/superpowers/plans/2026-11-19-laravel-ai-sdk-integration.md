@@ -1,7 +1,5 @@
 # laravel-rag v0.3.0: Laravel AI SDK Integration — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Rebuild `ikramulmustafa/laravel-rag` on the official `laravel/ai` SDK: SDK embeddings, an agent tool with scored citations, optional reranking, pgvector resize, after fixing the correctness bugs the audit found.
 
 **Architecture:** The package keeps its own storage layer (pgvector raw SQL + JSON/in-PHP cosine). Embedding moves behind an `EmbedderRegistry` whose default `sdk` driver calls `Laravel\Ai\Embeddings`. Retrieval is exposed to SDK agents through a `Laravel\Ai\Contracts\Tool` implementation, and reranking is a `Retriever` decorator. All bug-fix tasks (1–6) land before SDK tasks (7–12).

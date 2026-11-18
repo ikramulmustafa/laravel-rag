@@ -55,12 +55,12 @@ These would make the release a failure even if it works:
 - **One release, v0.3.0 (CHOSEN by the author).** Bug-fix commits come first, then the SDK work, in one PR, with one upgrade note.
 - v0.2.1 followed by v0.3.0: two upgrade notes for no real benefit to users.
 
-**Storage (author's call delegated; decided by Claude)**
+**Storage (author's call delegated; decided during design)**
 - **Keep the package's own storage layer (CHOSEN).** pgvector raw SQL with HNSW, and a JSON column plus in-PHP cosine on MySQL/SQLite. Working on every database is the differentiator against SDK `SimilaritySearch`.
 - Laravel's built-in vector methods: they throw on MySQL/SQLite, and on Laravel 12 they are Postgres-only. Rejected.
 - Hybrid (built-in methods on Postgres/MariaDB, own path elsewhere): two paths for little gain. Rejected.
 
-**Agent integration (decided by Claude)**
+**Agent integration (decided during design)**
 - **Own `Tool` class (CHOSEN).** Gives control over scores, the citation format, safe errors, the output cap and the filter allow-list.
 - Wrap SDK `SimilaritySearch(using: closure)`: loses scores and the output cap, has a generic description, and adds the SDK's prose wrapper. Rejected.
 - Agent middleware that injects context into every prompt: complementary rather than an alternative. Deferred to v0.4.
@@ -101,7 +101,7 @@ Config, `rag.embedding`:
 | `timeout` | `RAG_EMBEDDING_TIMEOUT` | `30` | |
 | `cache` | `RAG_EMBEDDING_CACHE` | `false` | Maps to `->cache()`. |
 
-Removed keys: `api_key` and `base_url`. Credentials now live in `config/ai.php`, and OpenAI-compatible endpoints use the SDK's `openai-compatible` provider.
+Removed key: `api_key`. Credentials now live in `config/ai.php`, and OpenAI-compatible endpoints use the SDK's `openai-compatible` provider. `base_url` stays as a deprecated key (default null) that is never used to send anything; it only arms the refusal in R10.
 
 **Each batch:**
 - The call is `Embeddings::for($batch)->dimensions($d)->timeout($t)->when($cache, fn ($p) => $p->cache())->generate($provider, $model)`.
@@ -320,3 +320,8 @@ Where the build differs from the text above, these rulings win.
 - R7: Rerank `candidates` must be 1..10 and the pool sent to the reranker is capped at 100.
 - R8: The tool shortens its echoed query to stay within `maxChars`; superseded by R8b.
 - R8b: The echoed query is capped at 200 characters first, then citations are dropped or trimmed, then the query is shortened further if still needed.
+- R9: The eval floors can be overridden with `RAG_EVAL_MIN_PASS_RATE`, `RAG_EVAL_MIN_RECALL_AT_K` and `RAG_EVAL_MIN_MRR` (defaults unchanged, empty values ignored), so `eval-real` gates on its own floors.
+- R10: Extends R4. `config/rag.php` keeps a deprecated `'base_url' => env('RAG_EMBEDDING_BASE_URL')` (default null). Both the `sdk` driver and the `openai` alias throw `InvalidArgumentException` before any request when it is set to anything but `https://api.openai.com/v1`, and the registry logs one warning when the merged `rag.embedding` block has no `provider` key (a published 0.2 config).
+- R11: UPGRADING is split into Step 0 (baseline, upgrade, migrate, re-publish the config and check it), then Path A (OpenAI directly) or Path B (a custom endpoint, ordered steps with checks), because the code cannot tell a published-config user whose `base_url` was removed from a stock OpenAI user.
+- R12: The `sdk` driver refuses a `rag.embedding` block without a `provider` key: `sdk` did not exist in 0.2, so such a block is always a half-finished migration whose new env vars are ignored. The `openai` alias is not affected.
+- R13: The committed design and plan documents carry no tool or process attribution.

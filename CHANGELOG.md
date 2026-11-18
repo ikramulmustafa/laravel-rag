@@ -16,7 +16,7 @@ such change will be listed here under **Changed** with an upgrade note.
 
 - Embeddings go through `laravel/ai`: the new default `sdk` driver, with `provider`, `send_dimensions`, `timeout` and `cache` under `rag.embedding`, and `Rag::extend()` to register other drivers.
 - `Rag::tool()`, a cited search tool for SDK agents, with a fixed collection and filters, allow-listed model filters and an output budget.
-- Optional reranking through the SDK (`rag.retrieval.rerank.*`); citations carry `rerank_score`.
+- Optional reranking through the SDK (`rag.retrieval.rerank.*`, with a `timeout` that defaults to 10 seconds); citations carry `rerank_score`. An empty provider or model counts as unset, and a failover list is refused in `ai.default_for_reranking` too.
 - `rag:reindex --stale` (documents with chunks from another model, or without an embedding) and `--resize` (change the pgvector column width).
 - `rag_documents.content` stores the source text, and `rag_eval_runs.config` records the settings of each eval run; `--baseline` warns when they differ.
 - `Ingestor::ingest(force:)` re-embeds a document whose text is unchanged.
@@ -45,11 +45,14 @@ such change will be listed here under **Changed** with an upgrade note.
 - Vector widths are checked on ingest and retrieval instead of being trusted.
 - Reindex works for content ingested from a database and no longer blanks hashes before ingesting; a failure on one document no longer aborts the run.
 - The migration no longer fails on a vector wider than pgvector's HNSW limit of 2000; it leaves the column unindexed.
+- pgvector searches are no longer cut off at `hnsw.ef_search` (40 rows): each search raises it to fit its limit, and filtered searches use iterative index scans on pgvector 0.8 or later.
+- `rag:reindex` reads each document just before re-embedding it and no longer overwrites a revision the app ingested meanwhile.
+- A vector holding NaN or infinity is refused before anything is stored.
 
 ### Deprecated
 
 - The `openai` embedding driver name, an alias for `sdk` with provider `openai`. It is removed in 1.0.
-- `rag.embedding.base_url` and `RAG_EMBEDDING_BASE_URL`. They are no longer used to send anything, and while set to anything other than `https://api.openai.com/v1` the embedder refuses to run, for the `sdk` driver and the `openai` alias (not `fake` or drivers added with `Rag::extend()`), so documents meant for a custom endpoint are not sent to OpenAI. Move to an `openai-compatible` provider in `config/ai.php`.
+- `rag.embedding.base_url` and `RAG_EMBEDDING_BASE_URL`. They are no longer used to send anything, and while set to anything other than `https://api.openai.com/v1` the embedder refuses to run, for the `sdk` driver and the `openai` alias (not `fake` or drivers added with `Rag::extend()`), so documents meant for a custom endpoint are not sent to OpenAI. Move to an `openai-compatible` provider in `config/ai.php`. The `sdk` driver also refuses a published `config/rag.php` that predates 0.3 (no `provider` key), since `RAG_EMBEDDING_PROVIDER` would be ignored.
 
 ### Removed
 

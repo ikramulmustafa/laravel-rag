@@ -62,7 +62,7 @@ RAG_EMBEDDING_MODEL=text-embedding-3-small
 RAG_EMBEDDING_DIMENSIONS=1536
 ```
 
-`RAG_EMBEDDING_PROVIDER` names a provider in `config/ai.php`. Left empty, it uses the SDK's `ai.default_for_embeddings`. It must be a single name: an SDK failover list is rejected, because a fallback provider would store another model's vectors under this model's id.
+`RAG_EMBEDDING_PROVIDER` names a provider in `config/ai.php`. Left empty, it uses the SDK's `ai.default_for_embeddings` (with the deprecated `openai` driver, empty means `openai`). It must be a single name: an SDK failover list is rejected, because a fallback provider would store another model's vectors under this model's id.
 
 Any SDK provider that supports embeddings works. For a local model through Ollama, with no key and no cost:
 
@@ -73,7 +73,7 @@ RAG_EMBEDDING_DIMENSIONS=768
 RAG_EMBEDDING_SEND_DIMENSIONS=false
 ```
 
-`RAG_EMBEDDING_SEND_DIMENSIONS=false` is "native" mode: no `dimensions` parameter is sent, for models that reject one. The width is still checked on every vector. Native mode only omits the parameter on providers whose SDK default width is 0 (`ollama` and `openai-compatible`). The SDK's `openai` provider always sends a width, so `text-embedding-ada-002` only works through `openai-compatible` in native mode.
+`RAG_EMBEDDING_SEND_DIMENSIONS=false` is "native" mode: no `dimensions` parameter is sent, for models that reject one. The width is still checked on every vector. Native mode only omits the parameter on providers whose SDK default width is 0 (`ollama` and `openai-compatible`), and only while that provider has no `models.embeddings.dimensions` set in `config/ai.php`: the SDK sends that value in place of 0. The SDK's `openai` provider always sends a width, so `text-embedding-ada-002` only works through `openai-compatible` in native mode.
 
 `RAG_EMBEDDING_DRIVER` is `sdk` by default. `fake` is a deterministic, network-free embedder for tests. To add your own, call `Rag::extend('name', fn ($app) => new MyEmbedder)` from a service provider, before the embedder is first used.
 
@@ -198,8 +198,9 @@ RAG_RERANK_CANDIDATES=3
 - `RAG_RERANK_MODEL` empty means the provider's default reranking model.
 - `RAG_RERANK_PROVIDER` empty means `ai.default_for_reranking`. It must be a single provider name.
 - `RAG_RERANK_CANDIDATES` must be between 1 and 10, and the pool sent to the reranker is capped at 100. With reranking on, a `limit` above 100 returns at most 100 results.
+- `RAG_RERANK_TIMEOUT` (seconds, default 10) bounds the reranking call, so a hung reranker delays a search by that much before the fallback below.
 - `score` stays the vector score, and `topScore()` is the highest vector score. The reranker's score is on the citation as `rerankScore`, and as `rerank_score` in the tool's output.
-- If the reranker fails, the search still answers in vector order and logs a warning.
+- If the reranker fails or times out, the search still answers in vector order and logs a warning.
 - It adds one provider call per search.
 
 ---
@@ -540,8 +541,17 @@ rag:reindex --force                         # skip confirmation
 ```
 
 `rag:reindex` re-embeds from the content stored at ingest time, and re-reads the
-file only for documents ingested before 0.3. A failure is reported per document
-and the exit code is non-zero if any failed; run it again to resume.
+file only for documents ingested before 0.3. Each document is read just before it
+is embedded, and one that the app re-ingests or deletes while that happens is left
+as the app wrote it, not overwritten with the older text. A failure is reported per
+document and the exit code is non-zero if any failed; run it again to resume.
+
+A failed document whose text was never stored (ingested before 0.3) and whose
+source no longer exists cannot be re-embedded, and while it keeps vectors from
+another model, search on its collection throws `MixedEmbeddingModels`. Delete it;
+its chunks go with it:
+`Ikram\Rag\Documents\Document::where('collection', $collection)->where('source', $source)->delete();`
+(both values are in the failure list, as `collection/source`).
 
 `--resize` is for switching to a model of a different width on Postgres. It
 refuses non-`vector` columns (for example `halfvec`) and cannot be combined with
@@ -653,6 +663,8 @@ suite you do not run.
 Worth knowing before you adopt this.
 
 **Postgres or nothing, in production.** SQLite and MySQL work, but fall back to computing cosine similarity in PHP, which loads every candidate row into memory. Fine for tests and small corpora. Not fine at scale.
+
+**Filtered search on pgvector before 0.8.** An HNSW index scan stops at `hnsw.ef_search` rows and applies filters afterwards. Each search raises `ef_search` for its own transaction to `min(1000, max(40, limit × 4))`, so a large limit or a rerank pool is filled. On pgvector 0.8 or later, a search with a collection or filters also turns on `hnsw.iterative_scan`, so a small collection still fills its limit. On older versions it can come back with fewer results than exist; upgrade pgvector if you filter on small collections.
 
 **Reranking is optional and off by default.** Retrieval is single-stage vector search unless you turn on [reranking](#reranking), which adds one provider call per search.
 
