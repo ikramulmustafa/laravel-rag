@@ -162,8 +162,9 @@ it('keeps search working while a resize is only partly re-embedded', function ()
 
     $this->artisan('rag:reindex', ['--resize' => true, '--force' => true])
         ->expectsOutputToContain('1 document(s) could not be reindexed')
-        ->expectsOutputToContain('These have no vectors and are left out of search')
-        ->expectsOutputToContain('rag:reindex --stale')
+        // One expectation per written line: the footer is a single write, and each
+        // expectation consumes the write it matches.
+        ->expectsOutputToContain('left out of search until they are re-embedded. Fix the cause, or re-ingest them, then run rag:reindex --stale')
         ->assertFailed();
 
     $sources = Rag::retrieve('refund for damaged goods', 10)->sources();
