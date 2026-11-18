@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Documents\Chunk;
 use Ikram\Rag\Documents\Document;
 use Ikram\Rag\Documents\Ingestor;
@@ -294,6 +295,106 @@ it('reports every failed document even when two collections share a source', fun
         ->expectsOutputToContain('a/docs/refunds.md')
         ->expectsOutputToContain('b/docs/refunds.md')
         ->assertFailed();
+});
+
+/**
+ * A 32-wide fake embedder that runs `$onEmbed` with the texts before answering,
+ * so a test can land an app ingest in the middle of a reindex.
+ */
+function embedderThatInterrupts(Closure $onEmbed): void
+{
+    useEmbedder(new class($onEmbed) implements Embedder
+    {
+        public function __construct(private readonly Closure $onEmbed) {}
+
+        public function embed(array $texts): array
+        {
+            ($this->onEmbed)($texts);
+
+            return (new FakeEmbedder(32))->embed($texts);
+        }
+
+        public function modelId(): string
+        {
+            return 'fake:deterministic-hash:32';
+        }
+
+        public function dimensions(): int
+        {
+            return 32;
+        }
+
+        public function estimateTokens(array $texts): int
+        {
+            return 0;
+        }
+    });
+}
+
+/** What an app ingest of a new revision leaves in the row, written behind the reindex's back. */
+function reviseBehindTheReindex(string $source, string $content): void
+{
+    Document::where('source', $source)->update(['content' => $content, 'content_hash' => Document::hashFor($content)]);
+}
+
+it('reads each document just before re-embedding it, not when its page was loaded', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('db:a', 'Alpha refunds are available within 30 days.');
+    $ingestor->ingest('db:b', 'Beta shipping takes five days.');
+
+    // While document a is embedded, the app saves a new revision of b.
+    embedderThatInterrupts(function (array $texts): void {
+        if (str_contains(implode(' ', $texts), 'Alpha')) {
+            reviseBehindTheReindex('db:b', 'Beta shipping now takes two days.');
+        }
+    });
+
+    $this->artisan('rag:reindex', ['--force' => true])->assertSuccessful();
+
+    $b = Document::where('source', 'db:b')->firstOrFail();
+
+    expect($b->content)->toBe('Beta shipping now takes two days.')
+        ->and($b->chunks()->pluck('text')->all())->toBe(['Beta shipping now takes two days.'])
+        ->and($b->chunks()->pluck('embedding_model')->unique()->all())->toBe(['fake:deterministic-hash:32']);
+});
+
+it('leaves a document alone when a newer ingest lands while it is re-embedded', function (): void {
+    app(Ingestor::class)->ingest('db:b', 'Beta shipping takes five days.');
+
+    $chunksBefore = Chunk::query()->orderBy('id')->get(['id', 'text', 'embedding_model'])->toArray();
+
+    // The new revision is saved during b's own embedding call, after the reindex read it.
+    embedderThatInterrupts(function (array $texts): void {
+        if (str_contains(implode(' ', $texts), 'five days')) {
+            reviseBehindTheReindex('db:b', 'Beta shipping now takes two days.');
+        }
+    });
+
+    $this->artisan('rag:reindex', ['--force' => true])
+        ->expectsOutputToContain('changed while it was being reindexed')
+        ->assertSuccessful();
+
+    $b = Document::where('source', 'db:b')->firstOrFail();
+
+    expect($b->content)->toBe('Beta shipping now takes two days.')
+        ->and($b->content_hash)->toBe(Document::hashFor('Beta shipping now takes two days.'))
+        ->and(Chunk::query()->orderBy('id')->get(['id', 'text', 'embedding_model'])->toArray())->toBe($chunksBefore);
+});
+
+it('passes over a document deleted while the reindex runs', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('db:a', 'Alpha refunds are available within 30 days.');
+    $ingestor->ingest('db:b', 'Beta shipping takes five days.');
+
+    embedderThatInterrupts(function (array $texts): void {
+        if (str_contains(implode(' ', $texts), 'Alpha')) {
+            Document::where('source', 'db:b')->delete();
+        }
+    });
+
+    $this->artisan('rag:reindex', ['--force' => true])->assertSuccessful();
+
+    expect(Document::query()->pluck('source')->all())->toBe(['db:a']);
 });
 
 it('runs --resize as --stale where the vector width is not fixed', function (): void {

@@ -23,7 +23,8 @@ use Throwable;
  * the response's model from the *requested* model, so a substituted model can't
  * be detected from the metadata. What this class does instead: it pins one
  * provider (no failover lists), sends the width it expects, and refuses any
- * response whose count or width is wrong before a single vector is stored.
+ * response whose count or width is wrong, or that holds a non-finite value,
+ * before a single vector is stored.
  */
 final class SdkEmbedder implements Embedder
 {
@@ -162,7 +163,21 @@ final class SdkEmbedder implements Embedder
                 ));
             }
 
-            $vectors[] = array_map(static fn (mixed $value): float => (float) $value, array_values($vector));
+            $floats = array_map(static fn (mixed $value): float => (float) $value, array_values($vector));
+
+            // Some local models emit NaN. pgvector would reject the row with the whole
+            // literal in its error, and JSON storage would keep nothing searchable.
+            foreach ($floats as $value) {
+                if (! is_finite($value)) {
+                    throw new EmbeddingFailed(sprintf(
+                        'Embedding provider [%s] returned a vector value that is not a finite number (NaN or infinity). '
+                        .'Nothing was stored.',
+                        $this->provider,
+                    ));
+                }
+            }
+
+            $vectors[] = $floats;
         }
 
         return $vectors;

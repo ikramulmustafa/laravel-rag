@@ -80,6 +80,17 @@ it('refuses a response with vectors of the wrong width', function (): void {
         ->and(strtolower($e->getMessage()))->not->toContain('http');
 });
 
+it('refuses a vector holding NaN or infinity', function (float $bad): void {
+    // A local model can emit these; pgvector would reject the row with the whole
+    // literal in the error, and JSON storage would store nothing searchable.
+    fakeSdkEmbeddings(fn (): array => [[...array_fill(0, 63, 0.1), $bad]]);
+
+    $e = caught(fn () => openAiEmbedder()->embed(['refund policy']));
+
+    expect($e)->toBeInstanceOf(EmbeddingFailed::class)
+        ->and($e->getMessage())->toContain('not a finite number');
+})->with(['NaN' => [NAN], 'infinity' => [INF], 'negative infinity' => [-INF]]);
+
 it('wraps an SDK failure without repeating what the provider said', function (): void {
     $failure = new RuntimeException('HTTP request returned status code 500: {"error":"secret body"}');
 

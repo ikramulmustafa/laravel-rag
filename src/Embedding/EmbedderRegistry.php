@@ -39,7 +39,7 @@ final class EmbedderRegistry
 
     public function __construct(private readonly Container $container)
     {
-        $this->factories['sdk'] = fn (): Embedder => $this->sdk($this->config());
+        $this->factories['sdk'] = fn (): Embedder => $this->sdk($this->refuseConfigPredating03($this->config()));
         $this->factories['fake'] = fn (): Embedder => new FakeEmbedder((int) config('rag.embedding.dimensions', 1536));
         $this->factories['openai'] = fn (): Embedder => $this->openAiAlias();
     }
@@ -126,6 +126,35 @@ final class EmbedderRegistry
             .'then run `php artisan rag:reindex --stale`.',
             is_string($host) && $host !== '' ? "[{$host}]" : 'a custom endpoint',
         ));
+    }
+
+    /**
+     * `sdk` did not exist in 0.2, so an `embedding` block that selects it but has
+     * no `provider` key is a migration left half done: the env vars 0.3 added,
+     * RAG_EMBEDDING_PROVIDER first, have no key to land in, and the provider
+     * would quietly become `ai.default_for_embeddings`. For an app moving off a
+     * private endpoint that means its documents going to OpenAI, so refuse. The
+     * `openai` alias is not checked: a stock 0.2 config must keep booting.
+     *
+     * The custom-endpoint check runs first, so that case keeps its own message.
+     *
+     * @param  array<string, mixed>  $config
+     * @return array<string, mixed>
+     */
+    private function refuseConfigPredating03(array $config): array
+    {
+        $this->refuseCustomEndpoint($config);
+
+        if (! array_key_exists('provider', $config)) {
+            throw new InvalidArgumentException(
+                'rag.embedding has no "provider" key: your published config/rag.php predates 0.3, so '
+                .'RAG_EMBEDDING_PROVIDER, RAG_EMBEDDING_SEND_DIMENSIONS, RAG_EMBEDDING_TIMEOUT and RAG_EMBEDDING_CACHE '
+                .'are ignored and the "sdk" driver would fall back to ai.default_for_embeddings. Re-publish it with '
+                .'`php artisan vendor:publish --tag=rag-config --force` (or add the 0.3 keys), then retry.'
+            );
+        }
+
+        return $config;
     }
 
     /**

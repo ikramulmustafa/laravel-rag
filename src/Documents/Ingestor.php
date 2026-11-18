@@ -43,6 +43,12 @@ final class Ingestor
     }
 
     /**
+     * `$expectedHash` is for callers that re-embed text they read from the store
+     * earlier, as rag:reindex does: the write only happens if the stored document
+     * still has that hash, so a newer revision saved meanwhile is not overwritten
+     * with the old text. Leave it null for ordinary ingests, where the latest
+     * call wins.
+     *
      * @param  array<string, mixed>  $metadata
      */
     public function ingest(
@@ -51,6 +57,7 @@ final class Ingestor
         string $collection = 'default',
         array $metadata = [],
         bool $force = false,
+        ?string $expectedHash = null,
     ): IngestResult {
         $hash = Document::hashFor($content);
 
@@ -58,6 +65,11 @@ final class Ingestor
             ->where('source', $source)
             ->where('collection', $collection)
             ->first();
+
+        // Checked before embedding too, so a revision that already landed costs nothing.
+        if ($this->supersededSince($existing, $expectedHash)) {
+            return $this->superseded($source, $existing);
+        }
 
         // Unchanged content is the single largest source of accidental embedding
         // spend. Re-ingesting a nightly export of 10k documents where nine have
@@ -85,7 +97,11 @@ final class Ingestor
 
             // The document was emptied. Leaving its old chunks would keep
             // retrieving text the source no longer contains.
-            return $this->connection->transaction(function () use ($existing, $source, $hash, $content, $metadata): IngestResult {
+            return $this->connection->transaction(function () use ($existing, $source, $hash, $content, $metadata, $expectedHash): IngestResult {
+                if ($this->supersededSince($existing, $expectedHash, lock: true)) {
+                    return $this->superseded($source, $existing);
+                }
+
                 $existing->content_hash = $hash;
                 $existing->content = $content;
                 $existing->metadata = $metadata;
@@ -111,8 +127,14 @@ final class Ingestor
         $this->guardVectors($source, $vectors, count($chunks));
 
         return $this->connection->transaction(function () use (
-            $existing, $source, $collection, $hash, $content, $metadata, $chunks, $vectors,
+            $existing, $source, $collection, $hash, $content, $metadata, $chunks, $vectors, $expectedHash,
         ): IngestResult {
+            // Again under a row lock: the embedding call can take long enough for
+            // the app to have saved a newer revision in the meantime.
+            if ($this->supersededSince($existing, $expectedHash, lock: true)) {
+                return $this->superseded($source, $existing);
+            }
+
             $document = $existing ?? new Document;
             $document->source = $source;
             $document->collection = $collection;
@@ -158,6 +180,33 @@ final class Ingestor
 
             return new IngestResult($source, count($chunks), $document->id, skipped: false);
         });
+    }
+
+    /**
+     * Whether the stored document has moved on from `$expectedHash`: re-saved with
+     * other text, or deleted. Always false without an expected hash.
+     */
+    private function supersededSince(?Document $existing, ?string $expectedHash, bool $lock = false): bool
+    {
+        if ($expectedHash === null) {
+            return false;
+        }
+
+        if ($existing === null) {
+            return true;
+        }
+
+        $current = Document::query()
+            ->whereKey($existing->id)
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->value('content_hash');
+
+        return $current !== $expectedHash;
+    }
+
+    private function superseded(string $source, ?Document $existing): IngestResult
+    {
+        return new IngestResult($source, 0, $existing === null ? 0 : $existing->id, skipped: true, superseded: true);
     }
 
     /**

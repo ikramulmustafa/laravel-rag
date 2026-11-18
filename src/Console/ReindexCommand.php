@@ -89,11 +89,26 @@ final class ReindexCommand extends Command
         /** @var list<string> $failed one line per document: collection, source, reason */
         $failed = [];
 
+        /** @var list<string> $superseded documents a newer ingest changed or deleted mid-run */
+        $superseded = [];
+
         $bar = $this->output->createProgressBar($total);
         $bar->start();
 
-        $query->chunkById(100, function ($documents) use ($ingestor, &$failed, $bar): void {
-            foreach ($documents as $document) {
+        // Ids only, and each document read just before it is embedded: a page of
+        // texts read up front could be minutes old by its last row, and writing
+        // that back would undo whatever the app ingested in between.
+        $query->select('id')->chunkById(100, function ($rows) use ($ingestor, &$failed, &$superseded, $bar): void {
+            foreach ($rows as $row) {
+                $document = Document::query()->find($row->id);
+
+                // Deleted since the run started: nothing left to reindex.
+                if ($document === null) {
+                    $bar->advance();
+
+                    continue;
+                }
+
                 try {
                     $content = $document->content ?? (is_readable($document->source)
                         ? file_get_contents($document->source)
@@ -106,14 +121,20 @@ final class ReindexCommand extends Command
                     // force rebuilds even when the text is unchanged, which is
                     // exactly the situation reindex exists to fix. The hash is
                     // only rewritten by a successful ingest, so a failure here
-                    // leaves the document as it was.
-                    $ingestor->ingest(
+                    // leaves the document as it was. The expected hash makes the
+                    // write give way to a revision saved while this one embeds.
+                    $result = $ingestor->ingest(
                         source: $document->source,
                         content: $content,
                         collection: $document->collection,
                         metadata: $document->metadata ?? [],
                         force: true,
+                        expectedHash: $document->content_hash,
                     );
+
+                    if ($result->superseded) {
+                        $superseded[] = "{$document->collection}/{$document->source}";
+                    }
                 } catch (Throwable $e) {
                     // A list, not keyed by source: the same source can exist in two collections.
                     $failed[] = "{$document->collection}/{$document->source} — ".class_basename($e).': '.$e->getMessage();
@@ -125,6 +146,15 @@ final class ReindexCommand extends Command
 
         $bar->finish();
         $this->newLine(2);
+
+        foreach ($superseded as $line) {
+            $this->line("  <fg=yellow>!</> {$line} changed while it was being reindexed; the newer version was kept.");
+        }
+
+        if ($superseded !== []) {
+            $this->line('  <fg=gray>If that version came from a worker still on the old model, run rag:reindex --stale.</>');
+            $this->line('');
+        }
 
         if ($failed !== []) {
             $this->components->error(count($failed).' document(s) could not be reindexed:');

@@ -15,8 +15,8 @@ use Throwable;
  * This wraps any retriever, over-fetches `limit * candidates`, and lets the SDK's
  * reranking model pick the best `limit`.
  *
- * Reranking is an enhancement, never a dependency: when the provider fails, the
- * search still answers, in vector order, and a warning is logged. The warning
+ * Reranking is an enhancement, never a dependency: when the provider fails or
+ * times out, the search still answers, in vector order, and a warning is logged. The warning
  * carries the exception class and provider name only, never the provider's
  * response body.
  */
@@ -32,9 +32,15 @@ final class RerankingRetriever implements Retriever
         private readonly int $candidates,
         private readonly int $defaultLimit,
         private readonly LoggerInterface $logger,
+        private readonly int $timeout = 10,
     ) {
         if ($candidates < 1 || $candidates > 10) {
             throw new InvalidArgumentException('rag.retrieval.rerank.candidates must be between 1 and 10.');
+        }
+
+        // 0 would mean no timeout at all to the HTTP client.
+        if ($timeout < 1) {
+            throw new InvalidArgumentException('rag.retrieval.rerank.timeout must be at least 1 second.');
         }
     }
 
@@ -61,6 +67,8 @@ final class RerankingRetriever implements Retriever
         try {
             $response = Reranking::of(array_map(static fn (Citation $c): string => $c->text, $pool))
                 ->limit($limit)
+                // Short, so a hung reranker costs seconds before the fallback, not the SDK's 30.
+                ->timeout($this->timeout)
                 ->rerank($query, $this->provider, $this->model);
         } catch (Throwable $e) {
             $this->logger->warning('Reranking failed; returning vector order.', [

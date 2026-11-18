@@ -51,28 +51,17 @@ final class RagServiceProvider extends ServiceProvider
                 return $retriever;
             }
 
-            $provider = config('rag.retrieval.rerank.provider');
-            $provider = $provider instanceof Lab ? $provider->value : $provider;
-
-            if (is_array($provider)) {
-                throw new InvalidArgumentException(
-                    'rag.retrieval.rerank.provider must be a single provider name or null; failover lists are not allowed, '
-                    .'because scores from different rerankers are not comparable within a run.'
-                );
-            }
-
-            if ($provider !== null && ! is_string($provider)) {
-                throw new InvalidArgumentException('rag.retrieval.rerank.provider must be a provider name string or null.');
-            }
-
+            $provider = self::rerankProvider();
             $model = config('rag.retrieval.rerank.model');
 
             return new RerankingRetriever(
                 inner: $retriever,
                 provider: $provider,
-                model: is_string($model) ? $model : null,
+                // Blank is unset, as for the provider; '' would reach the provider as a model name.
+                model: is_string($model) && $model !== '' ? $model : null,
                 candidates: (int) config('rag.retrieval.rerank.candidates', 3),
                 defaultLimit: $limit,
+                timeout: (int) config('rag.retrieval.rerank.timeout', 10),
                 logger: $app->make('log'),
             );
         });
@@ -94,6 +83,47 @@ final class RagServiceProvider extends ServiceProvider
         ));
 
         $this->app->alias('rag', RagManager::class);
+    }
+
+    /**
+     * The reranking provider, resolved here rather than left to the SDK so the
+     * single-provider rule also covers `ai.default_for_reranking`: a failover
+     * list there would mix scores from different rerankers within one run.
+     *
+     * A blank RAG_RERANK_PROVIDER is unset. Passed on as '', the SDK would not
+     * fall back to the reranking default but to `ai.default`, the text provider,
+     * which usually cannot rerank, so reranking would quietly never happen.
+     */
+    private static function rerankProvider(): ?string
+    {
+        $setting = 'rag.retrieval.rerank.provider';
+        $provider = self::providerName(config($setting));
+
+        if ($provider === null) {
+            $setting = 'ai.default_for_reranking';
+            $provider = self::providerName(config($setting));
+        }
+
+        if (is_array($provider)) {
+            throw new InvalidArgumentException(
+                "{$setting} must be a single provider name for reranking; failover lists are not allowed, "
+                .'because scores from different rerankers are not comparable within a run.'
+            );
+        }
+
+        if ($provider !== null && ! is_string($provider)) {
+            throw new InvalidArgumentException("{$setting} must be a provider name string or null.");
+        }
+
+        return $provider;
+    }
+
+    /** A Lab enum as its name, and blank as null; anything else is returned as it is, for the caller to check. */
+    private static function providerName(mixed $value): mixed
+    {
+        $value = $value instanceof Lab ? $value->value : $value;
+
+        return $value === '' ? null : $value;
     }
 
     public function boot(): void

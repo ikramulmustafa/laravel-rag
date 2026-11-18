@@ -3,10 +3,12 @@
 declare(strict_types=1);
 
 use Ikram\Rag\Contracts\Retriever;
+use Ikram\Rag\Facades\Rag;
 use Ikram\Rag\Retrieval\Citation;
 use Ikram\Rag\Retrieval\RerankingRetriever;
 use Ikram\Rag\Retrieval\RetrievalResult;
 use Illuminate\Support\Facades\Log;
+use Laravel\Ai\Enums\Lab;
 use Laravel\Ai\Prompts\RerankingPrompt;
 use Laravel\Ai\Reranking;
 use Laravel\Ai\Responses\Data\RankedDocument;
@@ -214,4 +216,66 @@ it('words the provider error by what is wrong with it', function (): void {
     config()->set('rag.retrieval.rerank.provider', ['a', 'b']);
     app()->forgetInstance(Retriever::class);
     expect(caught(fn () => app(Retriever::class))->getMessage())->toContain('failover');
+});
+
+/** Turn reranking on and ingest enough for a real pool, then rebuild the retriever. */
+function enableRerankingOverCorpus(array $rerank): void
+{
+    fakeSdkEmbeddings();
+    config()->set('rag.retrieval.rerank', ['enabled' => true, ...$rerank]);
+    app()->forgetInstance(Retriever::class);
+
+    Rag::ingest('policies/refunds.md', 'Customers may request a refund within 30 days of delivery.');
+    Rag::ingest('policies/shipping.md', 'Standard shipping takes 3 to 5 working days.');
+    Rag::ingest('handbook/leave.md', 'Annual leave accrues monthly.');
+}
+
+it('treats a blank rerank provider and model as unset', function (): void {
+    // ai.default is openai, which cannot rerank; ai.default_for_reranking is cohere.
+    config()->set('ai.default', 'openai');
+    config()->set('ai.default_for_reranking', 'cohere');
+    Reranking::fake([[new RankedDocument(1, 'b', 0.9), new RankedDocument(0, 'a', 0.5)]]);
+    enableRerankingOverCorpus(['provider' => '', 'model' => '']);
+
+    $result = app(Retriever::class)->retrieve('refund within 30 days', 2);
+
+    expect($result->citations[0]->rerankScore)->toBe(0.9);
+    Reranking::assertReranked(fn (RerankingPrompt $p): bool => $p->provider->name() === 'cohere' && $p->model !== '');
+});
+
+it('resolves a null rerank provider to ai.default_for_reranking, Lab enum included', function (): void {
+    config()->set('ai.default_for_reranking', Lab::Jina);
+    Reranking::fake([[new RankedDocument(0, 'a', 0.9), new RankedDocument(1, 'b', 0.5)]]);
+    enableRerankingOverCorpus(['provider' => null]);
+
+    app(Retriever::class)->retrieve('refund within 30 days', 2);
+
+    Reranking::assertReranked(fn (RerankingPrompt $p): bool => $p->provider->name() === 'jina');
+});
+
+it('refuses a failover list in ai.default_for_reranking when the rerank provider is unset', function (?string $provider): void {
+    config()->set('ai.default_for_reranking', ['cohere', 'jina']);
+    config()->set('rag.retrieval.rerank.enabled', true);
+    config()->set('rag.retrieval.rerank.provider', $provider);
+    app()->forgetInstance(Retriever::class);
+
+    $e = caught(fn () => app(Retriever::class));
+
+    expect($e)->toBeInstanceOf(InvalidArgumentException::class)
+        ->and($e->getMessage())->toContain('ai.default_for_reranking')
+        ->and($e->getMessage())->toContain('failover');
+})->with([null, '']);
+
+it('passes the configured rerank timeout to the SDK, 10 seconds by default', function (?int $timeout, int $expected): void {
+    Reranking::fake([[new RankedDocument(0, 'a', 0.9), new RankedDocument(1, 'b', 0.5)]]);
+    enableRerankingOverCorpus($timeout === null ? [] : ['timeout' => $timeout]);
+
+    app(Retriever::class)->retrieve('refund within 30 days', 2);
+
+    Reranking::assertReranked(fn (RerankingPrompt $p): bool => $p->timeout === $expected);
+})->with([[null, 10], [4, 4]]);
+
+it('refuses a rerank timeout below one second', function (): void {
+    expect(caught(fn () => new RerankingRetriever(stubRetriever([]), null, null, 3, 5, Log::channel('null'), timeout: 0)))
+        ->toBeInstanceOf(InvalidArgumentException::class);
 });

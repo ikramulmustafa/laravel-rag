@@ -249,3 +249,39 @@ it('does not warn about the config when it has the 0.3 keys', function (): void 
 
     Log::shouldNotHaveReceived('warning');
 });
+
+it('refuses the sdk driver with a published config that predates 0.3, before any request', function (array $block): void {
+    Log::spy();
+    fakeSdkEmbeddings();
+
+    // Path B half done without re-publishing: RAG_EMBEDDING_DRIVER=sdk reaches the
+    // 0.2 block, but RAG_EMBEDDING_PROVIDER has no key to land in, so the provider
+    // would silently fall back to ai.default_for_embeddings (OpenAI).
+    config()->set('rag.embedding', $block);
+    rebuildEmbedder();
+
+    $e = caught(fn () => Rag::ingest('policies/refunds.md', 'Customers may request a refund within 30 days.'));
+
+    expect($e)->toBeInstanceOf(InvalidArgumentException::class)
+        ->and($e->getMessage())->toContain('predates 0.3')
+        ->and($e->getMessage())->toContain('RAG_EMBEDDING_PROVIDER')
+        ->and($e->getMessage())->toContain('--tag=rag-config --force');
+
+    Embeddings::assertNothingGenerated();
+})->with([
+    'base_url at the 0.2 default' => [[
+        'driver' => 'sdk',
+        'model' => 'text-embedding-3-small',
+        'dimensions' => 64,
+        'api_key' => null,
+        'base_url' => 'https://api.openai.com/v1',
+        'batch_size' => 96,
+    ]],
+    'base_url removed' => [[
+        'driver' => 'sdk',
+        'model' => 'text-embedding-3-small',
+        'dimensions' => 64,
+        'api_key' => null,
+        'batch_size' => 96,
+    ]],
+]);

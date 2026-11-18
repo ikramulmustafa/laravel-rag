@@ -94,13 +94,15 @@ return [
         // let a reranking model (through the SDK) pick the best `limit`. `provider` null
         // means `ai.default_for_reranking`; it must be a single name, not a failover
         // list, so scores stay comparable across a run. If the reranker fails, the
-        // vector order is returned and a warning is logged. Off by default: it adds
-        // one provider call per search.
+        // vector order is returned and a warning is logged; `timeout` (seconds) keeps
+        // a hung reranker from holding every search. Empty provider or model values
+        // count as unset. Off by default: it adds one provider call per search.
         'rerank' => [
             'enabled' => (bool) env('RAG_RERANK', false),
             'provider' => env('RAG_RERANK_PROVIDER'),
             'model' => env('RAG_RERANK_MODEL'),
             'candidates' => (int) env('RAG_RERANK_CANDIDATES', 3),
+            'timeout' => in_array(env('RAG_RERANK_TIMEOUT'), [null, ''], true) ? 10 : (int) env('RAG_RERANK_TIMEOUT'),
         ],
     ],
 
