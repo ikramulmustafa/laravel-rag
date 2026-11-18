@@ -1,6 +1,6 @@
 {
     "name": "ikramulmustafa/laravel-rag",
-    "description": "Production RAG for Laravel: pgvector retrieval with citations, and an eval harness that fails CI when retrieval quality regresses.",
+    "description": "RAG layer for the Laravel AI SDK: ingestion, cited retrieval on any database, and an eval harness that fails CI.",
     "keywords": [
         "laravel",
         "rag",
@@ -9,7 +9,10 @@
         "llm",
         "ai",
         "retrieval",
-        "evaluation"
+        "evaluation",
+        "laravel-ai",
+        "agents",
+        "tool"
     ],
     "homepage": "https://ikramulmustafa.com",
     "license": "MIT",

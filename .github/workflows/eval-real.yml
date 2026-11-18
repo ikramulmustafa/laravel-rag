@@ -4,9 +4,11 @@ name: Eval (real model)
 # runner and serves nomic-embed-text. The per-push eval in ci.yml uses the hashed
 # fake embedder, which proves the plumbing but not semantic retrieval.
 #
-# The pull_request trigger is filtered to this file so the job runs when it is
-# edited. GitHub only dispatches a workflow that exists on the default branch, so
-# a new workflow cannot be run by hand from a feature branch until it is merged.
+# The pull_request trigger is filtered to this file and to the code a real model
+# goes through (the embedding and retrieval paths, and the dependency set), so a
+# change there is checked before merge rather than by the next weekly run.
+# GitHub only dispatches a workflow that exists on the default branch, so a new
+# workflow cannot be run by hand from a feature branch until it is merged.
 on:
   schedule:
     - cron: '0 6 * * 1'
@@ -14,6 +16,9 @@ on:
   pull_request:
     paths:
       - '.github/workflows/eval-real.yml'
+      - 'src/Embedding/**'
+      - 'src/Retrieval/**'
+      - 'composer.json'
 
 permissions:
   contents: read
@@ -91,4 +96,11 @@ jobs:
       - name: Evaluate retrieval with the real model
         env:
           DB_DATABASE: ${{ runner.temp }}/rag.sqlite
-        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --ci --json
+        run: vendor/bin/testbench rag:eval --suite=tests/Fixtures/suite.json --k=2 --ci --json --save="$RUNNER_TEMP/eval.json"
+
+      # The fixture suite also passes with the hashed fake embedder at k=2, so a
+      # run that quietly fell back to it would look like a pass. Check the report
+      # names the real model.
+      - name: Check the eval ran on nomic-embed-text
+        run: |
+          php -r '$r = json_decode((string) file_get_contents(getenv("RUNNER_TEMP")."/eval.json"), true); $m = $r["embedding_model"] ?? null; if ($m !== "ollama:nomic-embed-text:768") { fwrite(STDERR, "eval ran on the wrong embedding model: ".var_export($m, true).PHP_EOL); exit(1); } echo "embedding model: ", $m, PHP_EOL;'
