@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Ikram\Rag;
 
 use Closure;
+use Ikram\Rag\Ai\SearchKnowledgeBase;
 use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Documents\Ingestor;
@@ -43,6 +44,35 @@ final class RagManager
         array $metadata = [],
     ): IngestResult {
         return $this->ingestor()->ingest($source, $content, $collection, $metadata);
+    }
+
+    /**
+     * A search tool for a laravel/ai agent: return it from the agent's tools().
+     * The collection and filters given here are fixed; the model may only narrow
+     * the search on the `$allowedFilters` keys.
+     *
+     * @param  array<string, mixed>  $filters
+     * @param  list<string>  $allowedFilters
+     */
+    public function tool(
+        ?string $collection = null,
+        array $filters = [],
+        array $allowedFilters = [],
+        ?int $limit = null,
+        ?string $name = null,
+        ?string $description = null,
+        int $maxChars = 8000,
+    ): SearchKnowledgeBase {
+        return new SearchKnowledgeBase(
+            retriever: $this->retriever(),
+            collection: $collection,
+            filters: $filters,
+            allowedFilters: $allowedFilters,
+            limit: $limit ?? (int) config('rag.retrieval.default_limit', 5),
+            name: $name ?? 'search_knowledge_base',
+            description: $description,
+            maxChars: $maxChars,
+        );
     }
 
     /**
