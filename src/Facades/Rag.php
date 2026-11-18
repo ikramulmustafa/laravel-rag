@@ -10,7 +10,7 @@ use Ikram\Rag\Retrieval\RetrievalResult;
 use Illuminate\Support\Facades\Facade;
 
 /**
- * @method static RetrievalResult retrieve(string $query, int $limit = 5, array<string, mixed> $filters = [])
+ * @method static RetrievalResult retrieve(string $query, ?int $limit = null, array<string, mixed> $filters = [])
  * @method static IngestResult ingest(string $source, string $content, string $collection = 'default', array<string, mixed> $metadata = [])
  *
  * @see RagManager

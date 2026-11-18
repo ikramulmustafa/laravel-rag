@@ -11,7 +11,8 @@ interface Retriever
     /**
      * Retrieve the most relevant chunks for a query.
      *
+     * @param  int|null  $limit  Maximum number of citations; null means the configured default
      * @param  array<string, mixed>  $filters  Metadata filters, e.g. ['collection' => 'policies']
      */
-    public function retrieve(string $query, int $limit = 5, array $filters = []): RetrievalResult;
+    public function retrieve(string $query, ?int $limit = null, array $filters = []): RetrievalResult;
 }

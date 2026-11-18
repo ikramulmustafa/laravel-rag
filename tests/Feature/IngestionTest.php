@@ -7,7 +7,11 @@ use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Documents\Chunk;
 use Ikram\Rag\Documents\Document;
 use Ikram\Rag\Documents\Ingestor;
+use Ikram\Rag\Embedding\FakeEmbedder;
+use Ikram\Rag\Exceptions\EmbeddingFailed;
 use Ikram\Rag\Exceptions\IngestionAborted;
+use Ikram\Rag\Facades\Rag;
+use Ikram\Rag\RagManager;
 
 it('stores a document with its chunks', function (): void {
     $result = app(Ingestor::class)->ingest('policies/refunds.md', str_repeat('refund policy text. ', 60));
@@ -45,7 +49,7 @@ it('replaces old chunks instead of orphaning them when content changes', functio
 it('records which model produced each vector', function (): void {
     app(Ingestor::class)->ingest('doc.md', 'some content worth embedding');
 
-    expect(Chunk::first()->embedding_model)->toBe('fake:deterministic-hash');
+    expect(Chunk::first()->embedding_model)->toBe('fake:deterministic-hash:64');
 });
 
 it('aborts before spending when the confirmation callback declines', function (): void {
@@ -69,4 +73,88 @@ it('keeps documents in separate collections apart', function (): void {
     $ingestor->ingest('shared-name.md', 'content B', 'handbook');
 
     expect(Document::count())->toBe(2);
+});
+
+/**
+ * An embedder that reports the configured width but hands back whatever the
+ * test asks for, to prove the Ingestor checks what it is given.
+ *
+ * @param  callable(list<string>): list<list<float>>  $embed
+ */
+function misbehavingEmbedder(callable $embed): Embedder
+{
+    return new class($embed) implements Embedder
+    {
+        /** @var callable(list<string>): list<list<float>> */
+        private $embed;
+
+        public function __construct(callable $embed)
+        {
+            $this->embed = $embed;
+        }
+
+        public function embed(array $texts): array
+        {
+            return ($this->embed)($texts);
+        }
+
+        public function modelId(): string
+        {
+            return 'fake:deterministic-hash:64';
+        }
+
+        public function dimensions(): int
+        {
+            return 64;
+        }
+
+        public function estimateTokens(array $texts): int
+        {
+            return 0;
+        }
+    };
+}
+
+function useIngestionEmbedder(Embedder $embedder): void
+{
+    app()->instance(Embedder::class, $embedder);
+    app()->forgetInstance(Ingestor::class);
+    app()->forgetInstance('rag');
+    app()->forgetInstance(RagManager::class);
+    Rag::clearResolvedInstance('rag');
+}
+
+it('refuses an embedder that returns the wrong number of vectors', function (): void {
+    useIngestionEmbedder(misbehavingEmbedder(
+        fn (array $texts): array => array_slice((new FakeEmbedder(64))->embed($texts), 1),
+    ));
+
+    expect(fn () => Rag::ingest('doc.md', 'some content worth embedding'))
+        ->toThrow(EmbeddingFailed::class, 'vectors');
+
+    expect(Document::count())->toBe(0)
+        ->and(Chunk::count())->toBe(0);
+});
+
+it('refuses an embedder that returns vectors of the wrong width', function (): void {
+    useIngestionEmbedder(misbehavingEmbedder(
+        fn (array $texts): array => (new FakeEmbedder(32))->embed($texts),
+    ));
+
+    expect(fn () => Rag::ingest('doc.md', 'some content worth embedding'))
+        ->toThrow(EmbeddingFailed::class, '32');
+
+    expect(Document::count())->toBe(0)
+        ->and(Chunk::count())->toBe(0);
+});
+
+it('skips unchanged content whose chunks carry the legacy id of the current model', function (): void {
+    $ingestor = app(Ingestor::class);
+    $content = 'Stable content embedded before ids carried a width.';
+
+    $ingestor->ingest('doc.md', $content);
+    Chunk::query()->update(['embedding_model' => 'fake:deterministic-hash']);
+
+    expect($ingestor->ingest('doc.md', $content)->skipped)->toBeTrue()
+        ->and(Chunk::first()->embedding_model)->toBe('fake:deterministic-hash');
 });

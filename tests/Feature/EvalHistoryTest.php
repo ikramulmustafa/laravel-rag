@@ -25,7 +25,7 @@ it('records a run so scores can be compared over time', function (): void {
 
     expect($row)->not->toBeNull()
         ->and($row->suite)->toBe('history')
-        ->and($row->embedding_model)->toBe('fake:deterministic-hash')
+        ->and($row->embedding_model)->toBe('fake:deterministic-hash:64')
         ->and((int) $row->total_cases)->toBe(1)
         ->and(json_decode((string) $row->metrics, true))->toHaveKey('recall_at_k');
 });
@@ -48,7 +48,7 @@ it('carries the embedding model on the report, so a run is traceable to its vect
         new EvalCase('refund', 'refund', ['policies/refunds.md']),
     ]))->run(app(Retriever::class));
 
-    expect($report->embeddingModel)->toBe('fake:deterministic-hash')
+    expect($report->embeddingModel)->toBe('fake:deterministic-hash:64')
         ->and(json_decode((string) json_encode($report), true))
         ->toHaveKey('embedding_model');
 });

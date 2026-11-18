@@ -121,7 +121,7 @@ jobs:
       # this package is about, so assert the row landed rather than trusting it.
       - name: Check the run was recorded in rag_eval_runs
         run: |
-          php -r '$p = new PDO("pgsql:host=localhost;port=5432;dbname=rag_test", "postgres", "postgres"); $r = $p->query("SELECT suite, embedding_model, total_cases FROM rag_eval_runs ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC); if (! $r) { fwrite(STDERR, "no eval run was recorded\n"); exit(1); } if ($r["embedding_model"] !== "fake:deterministic-hash") { fwrite(STDERR, "recorded run has the wrong embedding model: " . $r["embedding_model"] . "\n"); exit(1); } echo "recorded: ", json_encode($r), PHP_EOL;'
+          php -r '$p = new PDO("pgsql:host=localhost;port=5432;dbname=rag_test", "postgres", "postgres"); $r = $p->query("SELECT suite, embedding_model, total_cases FROM rag_eval_runs ORDER BY id DESC LIMIT 1")->fetch(PDO::FETCH_ASSOC); if (! $r) { fwrite(STDERR, "no eval run was recorded\n"); exit(1); } if ($r["embedding_model"] !== "fake:deterministic-hash:64") { fwrite(STDERR, "recorded run has the wrong embedding model: " . $r["embedding_model"] . "\n"); exit(1); } echo "recorded: ", json_encode($r), PHP_EOL;'
 
   static:
     runs-on: ubuntu-latest

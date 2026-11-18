@@ -2,10 +2,29 @@
 
 declare(strict_types=1);
 
+use Ikram\Rag\Contracts\Embedder;
 use Ikram\Rag\Contracts\Retriever;
 use Ikram\Rag\Documents\Ingestor;
+use Ikram\Rag\Embedding\FakeEmbedder;
+use Ikram\Rag\Exceptions\DimensionMismatch;
 use Ikram\Rag\Exceptions\MixedEmbeddingModels;
+use Ikram\Rag\Facades\Rag;
+use Ikram\Rag\RagManager;
 use Illuminate\Support\Facades\DB;
+
+/**
+ * Swap the embedder and drop every singleton built on the old one, so the next
+ * resolve of the retriever or the facade picks the replacement up.
+ */
+function useRetrievalEmbedder(Embedder $embedder): void
+{
+    app()->instance(Embedder::class, $embedder);
+    app()->forgetInstance(Retriever::class);
+    app()->forgetInstance(Ingestor::class);
+    app()->forgetInstance('rag');
+    app()->forgetInstance(RagManager::class);
+    Rag::clearResolvedInstance('rag');
+}
 
 beforeEach(function (): void {
     $ingestor = app(Ingestor::class);
@@ -38,7 +57,7 @@ it('respects the limit', function (): void {
 
 it('records which model was used for the search', function (): void {
     expect(app(Retriever::class)->retrieve('leave')->embeddingModel)
-        ->toBe('fake:deterministic-hash');
+        ->toBe('fake:deterministic-hash:64');
 });
 
 it('filters by collection', function (): void {
@@ -101,4 +120,119 @@ it('filters by several values for one metadata key', function (): void {
     $result = app(Retriever::class)->retrieve('refund handling', limit: 10, filters: ['team' => ['support', 'legal']]);
 
     expect($result->sources())->toEqualCanonicalizing(['manuals/a.md', 'manuals/c.md']);
+});
+
+it('treats legacy suffix-less ids as the current model', function (): void {
+    $ids = DB::table('rag_chunks')->orderBy('id')->pluck('id');
+    DB::table('rag_chunks')
+        ->whereIn('id', $ids->take(max(1, intdiv($ids->count(), 2)))->all())
+        ->update(['embedding_model' => 'fake:deterministic-hash']);
+
+    expect(DB::table('rag_chunks')->distinct()->pluck('embedding_model')->sort()->values()->all())
+        ->toBe(['fake:deterministic-hash', 'fake:deterministic-hash:64'])
+        ->and(Rag::retrieve('refund for damaged goods')->isEmpty())->toBeFalse();
+});
+
+it('scopes the mixed-model guard to the searched collection', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('a/refunds.md', 'refund for damaged goods in collection a', 'a');
+    $ingestor->ingest('b/refunds.md', 'refund for damaged goods in collection b', 'b');
+
+    DB::table('rag_chunks')
+        ->whereIn('document_id', DB::table('rag_documents')->where('collection', 'b')->pluck('id')->all())
+        ->update(['embedding_model' => 'other:model:64']);
+
+    expect(Rag::retrieve('refund', 10, ['collection' => 'a'])->sources())->toBe(['a/refunds.md'])
+        ->and(fn () => Rag::retrieve('refund'))->toThrow(MixedEmbeddingModels::class, 'other:model:64');
+});
+
+it('re-checks the corpus on every search', function (): void {
+    expect(Rag::retrieve('refund')->isEmpty())->toBeFalse();
+
+    DB::table('rag_chunks')->limit(1)->update(['embedding_model' => 'other:model:64']);
+
+    expect(fn () => Rag::retrieve('refund'))->toThrow(MixedEmbeddingModels::class);
+});
+
+it('rejects a stored vector of another width on the in-PHP path', function (): void {
+    DB::table('rag_chunks')->limit(1)->update(['embedding' => json_encode(array_fill(0, 32, 0.1))]);
+
+    expect(fn () => Rag::retrieve('refund'))
+        ->toThrow(DimensionMismatch::class, 'rag:reindex');
+});
+
+it('rejects a query vector that does not match the configured width', function (): void {
+    useRetrievalEmbedder(new class implements Embedder
+    {
+        public function embed(array $texts): array
+        {
+            return (new FakeEmbedder(32))->embed($texts);
+        }
+
+        public function modelId(): string
+        {
+            return 'fake:deterministic-hash:64';
+        }
+
+        public function dimensions(): int
+        {
+            return 64;
+        }
+
+        public function estimateTokens(array $texts): int
+        {
+            return 0;
+        }
+    });
+
+    expect(fn () => Rag::retrieve('refund'))
+        ->toThrow(DimensionMismatch::class, '32');
+});
+
+it('returns an empty result for a blank query without embedding', function (): void {
+    useRetrievalEmbedder(new class implements Embedder
+    {
+        public function embed(array $texts): array
+        {
+            throw new LogicException('A blank query must not be embedded.');
+        }
+
+        public function modelId(): string
+        {
+            return 'fake:deterministic-hash:64';
+        }
+
+        public function dimensions(): int
+        {
+            return 64;
+        }
+
+        public function estimateTokens(array $texts): int
+        {
+            return 0;
+        }
+    });
+
+    $result = Rag::retrieve("   \n\t");
+
+    expect($result->isEmpty())->toBeTrue()
+        ->and($result->embeddingModel)->toBe('fake:deterministic-hash:64');
+});
+
+it('uses retrieval.default_limit when no limit is given', function (): void {
+    $ingestor = app(Ingestor::class);
+    $ingestor->ingest('policies/returns.md', 'Returns are accepted for unused items in their packaging.');
+    $ingestor->ingest('policies/warranty.md', 'The warranty covers manufacturing faults for two years.');
+
+    config()->set('rag.retrieval.default_limit', 2);
+    app()->forgetInstance(Retriever::class);
+    app()->forgetInstance('rag');
+    Rag::clearResolvedInstance('rag');
+
+    expect(Rag::retrieve('policy refund shipping leave returns warranty')->count())->toBe(2);
+});
+
+it('rejects filter keys that are not plain identifiers', function (): void {
+    expect(fn () => Rag::retrieve('x', null, ['a->b' => 1]))
+        ->toThrow(InvalidArgumentException::class);
 });

@@ -54,6 +54,7 @@ final class RagServiceProvider extends ServiceProvider
             embedder: $app->make(Embedder::class),
             connection: $app->make('db')->connection(config('rag.connection')),
             minScore: (float) config('rag.retrieval.min_score'),
+            defaultLimit: (int) config('rag.retrieval.default_limit', 5),
         ));
 
         $this->app->singleton(Ingestor::class, fn (Container $app): Ingestor => new Ingestor(

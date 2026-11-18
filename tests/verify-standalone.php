@@ -17,6 +17,7 @@ spl_autoload_register(function (string $class): void {
 
 use Ikram\Rag\Chunking\RecursiveChunker;
 use Ikram\Rag\Contracts\Retriever;
+use Ikram\Rag\Embedding\EmbeddingModelId;
 use Ikram\Rag\Embedding\FakeEmbedder;
 use Ikram\Rag\Eval\EvalCase;
 use Ikram\Rag\Eval\EvalSuite;
@@ -74,7 +75,7 @@ final class ArrayRetriever implements Retriever
     /** @param array<string, string> $docs source => text */
     public function __construct(private array $docs, private FakeEmbedder $embedder) {}
 
-    public function retrieve(string $query, int $limit = 5, array $filters = []): RetrievalResult
+    public function retrieve(string $query, ?int $limit = null, array $filters = []): RetrievalResult
     {
         [$q] = $this->embedder->embed([$query]);
         $scored = [];
@@ -87,7 +88,7 @@ final class ArrayRetriever implements Retriever
 
         usort($scored, fn ($a, $b) => $b->score <=> $a->score);
 
-        return new RetrievalResult($query, array_slice($scored, 0, $limit), $this->embedder->modelId());
+        return new RetrievalResult($query, array_slice($scored, 0, $limit ?? 5), $this->embedder->modelId());
     }
 }
 
@@ -173,6 +174,8 @@ check('batch order is preserved', function () {
 
 check('declares itself fake', fn () => str_starts_with((new FakeEmbedder)->modelId(), 'fake:'));
 
+check('model id carries the width', fn () => (new FakeEmbedder(32))->modelId() === 'fake:deterministic-hash:32');
+
 check('handles tokenless text', fn () => (new FakeEmbedder(8))->embed(['!!! ???'])[0] === array_fill(0, 8, 0.0));
 
 check('empty batch returns empty', fn () => (new FakeEmbedder)->embed([]) === []);
@@ -184,6 +187,17 @@ check('orthogonal vectors score 0', fn () => abs(VectorRetriever::cosine([1.0, 0
 check('opposite vectors score -1', fn () => abs(VectorRetriever::cosine([1.0, 0.0], [-1.0, 0.0]) + 1.0) < 0.0001);
 check('zero vector does not divide by zero', fn () => VectorRetriever::cosine([0.0, 0.0], [1.0, 1.0]) === 0.0);
 check('magnitude does not affect score', fn () => abs(VectorRetriever::cosine([1.0, 1.0], [5.0, 5.0]) - 1.0) < 0.0001);
+
+echo "\nEmbeddingModelId\n";
+
+check('joins driver, model and dimensions', fn () => EmbeddingModelId::make('openai', 'text-embedding-3-small', 1536) === 'openai:text-embedding-3-small:1536');
+check('legacy form strips the width', fn () => EmbeddingModelId::legacyForm('openai:text-embedding-3-small:1536') === 'openai:text-embedding-3-small');
+check('legacy form of the fake id', fn () => EmbeddingModelId::legacyForm('fake:deterministic-hash:64') === 'fake:deterministic-hash');
+check('no legacy form without a width', fn () => EmbeddingModelId::legacyForm('ollama:nomic-embed-text') === null);
+check('legacy stored id matches the current id', fn () => EmbeddingModelId::matches('openai:x', 'openai:x:1536'));
+check('identical ids match', fn () => EmbeddingModelId::matches('openai:x:1536', 'openai:x:1536'));
+check('another width does not match', fn () => ! EmbeddingModelId::matches('openai:x:768', 'openai:x:1536'));
+check('full stored id does not match a suffix-less current id', fn () => ! EmbeddingModelId::matches('openai:x:1536', 'openai:x'));
 
 echo "\npgvector literal formatting\n";
 
@@ -203,7 +217,7 @@ $result = new RetrievalResult('q', [
     new Citation(1, 10, 'a.md', 'text one', 0, 0.9),
     new Citation(2, 10, 'a.md', 'text two', 1, 0.8),
     new Citation(3, 11, 'b.md', 'text three', 0, 0.7),
-], 'fake:deterministic-hash');
+], 'fake:deterministic-hash:64');
 
 check('counts citations', fn () => count($result) === 3);
 check('deduplicates document ids', fn () => $result->documentIds() === [10, 11]);

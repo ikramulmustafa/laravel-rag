@@ -6,6 +6,8 @@ namespace Ikram\Rag\Documents;
 
 use Ikram\Rag\Contracts\Chunker;
 use Ikram\Rag\Contracts\Embedder;
+use Ikram\Rag\Embedding\EmbeddingModelId;
+use Ikram\Rag\Exceptions\EmbeddingFailed;
 use Ikram\Rag\Exceptions\IngestionAborted;
 use Ikram\Rag\Retrieval\Vector;
 use Illuminate\Database\Connection;
@@ -79,6 +81,7 @@ final class Ingestor
         }
 
         $vectors = $this->embedder->embed($texts);
+        $this->guardVectors($source, $vectors, count($chunks));
 
         return $this->connection->transaction(function () use (
             $existing, $source, $collection, $hash, $metadata, $chunks, $vectors,
@@ -129,10 +132,55 @@ final class Ingestor
         });
     }
 
+    /**
+     * The embedder's output is checked before anything is written. A short batch
+     * would pair chunks with the wrong vectors, or none, and a vector of the wrong
+     * width is stored happily as JSON and only fails, or worse ranks, at search time.
+     *
+     * @param  array<int, mixed>  $vectors
+     */
+    private function guardVectors(string $source, array $vectors, int $expectedCount): void
+    {
+        if (! array_is_list($vectors) || count($vectors) !== $expectedCount) {
+            throw new EmbeddingFailed(sprintf(
+                "The embedder returned %d vectors for %d chunks of '%s'. Nothing was stored.",
+                count($vectors),
+                $expectedCount,
+                $source,
+            ));
+        }
+
+        $expectedWidth = $this->embedder->dimensions();
+
+        foreach ($vectors as $vector) {
+            $width = is_array($vector) ? count($vector) : 0;
+
+            if ($width !== $expectedWidth) {
+                throw new EmbeddingFailed(sprintf(
+                    "The embedder returned a vector of %d dimensions for '%s' but is configured for %d. "
+                    .'Nothing was stored. Check rag.embedding.dimensions; if it changed, run `php artisan rag:reindex`.',
+                    $width,
+                    $source,
+                    $expectedWidth,
+                ));
+            }
+        }
+    }
+
+    /**
+     * Legacy ids written by 0.2 count as the current model (see EmbeddingModelId),
+     * so upgrading does not re-embed an unchanged corpus.
+     */
     private function modelMatchesExistingChunks(Document $document): bool
     {
-        $models = $document->chunks()->distinct()->pluck('embedding_model')->all();
+        $current = $this->embedder->modelId();
 
-        return $models === [] || $models === [$this->embedder->modelId()];
+        foreach ($document->chunks()->distinct()->pluck('embedding_model') as $stored) {
+            if (! EmbeddingModelId::matches((string) $stored, $current)) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

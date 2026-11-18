@@ -22,7 +22,7 @@ final class RagManager
     ) {}
 
     /** @param array<string, mixed> $filters */
-    public function retrieve(string $query, int $limit = 5, array $filters = []): RetrievalResult
+    public function retrieve(string $query, ?int $limit = null, array $filters = []): RetrievalResult
     {
         return $this->retriever->retrieve($query, $limit, $filters);
     }
